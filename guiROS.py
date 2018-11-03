@@ -66,10 +66,12 @@ import time
 import tkinter as tk
 from PIL import ImageGrab, Image, ImageTk
 
-portName = ['portName', 'ttyS0 (UART0)', 'ttyTHS2 (UART1)', 'i2c (master)', 'USB 3.0 (CMOS)', 'USB OTG', 'GPIO (H13)', 'GPIO (G14)'
+portName = ['portName', 'ttyS0 (UART0)', 'ttyTHS2 (UART1)', 'i2c (master)'
+            , 'USB 3.0 (CMOS)', 'USB OTG', 'GPIO (H13)', 'GPIO (G14)'
             , 'GPIO (A22)', 'GPIO (A23)']
 
-initStat = ['status', 'connect', 'connect', 'openDrain', 'connect', 'notin', 'OUTPUT', 'OUTPUT', 'OUTPUT', 'OUTPUT']
+initStat = ['status', 'connect', 'connect', 'openDrain', 'connect'
+            , 'notin', 'OUTPUT', 'OUTPUT', 'OUTPUT', 'OUTPUT']
 
 initBuffer = ['bufferSize', '0', '0', '0', '0', '0', '0', '0', '0', '0']
 
@@ -78,13 +80,18 @@ LF2body = ['table', 'mgf', 'gam', 'gys', 'massCenter', 'contactAngle'
 
 LF2body_value = ['value', '0', '0', '0', '0', '0', '0', '0', '0', '0']
 
-LF3cmos = ['detectedFeature', 'targetcnt', 'targetDistance', 'signalStrength', 'latency(ms)']
+LF3cmos = ['table', 'detectedFeature', 'targetcnt', 'targetDistance', 'signalStrength'
+           ,'notin' ,'notin' ,'notin' ,'notin' ,'latency(ms)']
+
+LF3cmos_value = ['value', '0', '0', '0', '0', '0', '0', '0', '0', '0']
 
 c0Label = []
 c1Label = []
 c2Label = []
 c3Label = []
 c4Label = []
+c5Label = []
+c6Label = []
 
 
 #img = Image.open('temp.jpg')
@@ -108,7 +115,7 @@ def autoupdate():
 
 App = tk.Tk()
 App.title('myController')
-App.resizable(width = True, height = False)
+App.resizable(width = False, height = False)
 App.geometry('800x550+500+250')
 
 #making menu
@@ -160,18 +167,27 @@ for i in LF2body:
 
 count = 0
 for i in LF2body_value:
-    c3Label.append(i)
-    c3Label[count] = tk.Label(myLF2, text = i, padx = 5, pady = 5)
-    c3Label[count].grid(row = count, column = 1)
+    c4Label.append(i)
+    c4Label[count] = tk.Label(myLF2, text = i, padx = 5, pady = 5)
+    c4Label[count].grid(row = count, column = 1)
     count = count + 1    
 
 #making 3rd labelFrame
 myLF3 = tk.LabelFrame(App, text = 'cmosStatus', padx = 2, pady = 2, labelanchor = 'n')
 myLF3.grid(row = 0, column = 2, padx = 15, pady = 5)
-c4Label = tk.Label(myLF3, text = 'detectedFeature', padx = 5, pady = 5)
-c4Label.grid(row = 0, column = 0)
-c5Label = tk.Label(myLF3, text = 'targetDistance', padx = 5, pady = 5)
-c5Label.grid(row = 1, column = 0)
+count = 0
+for i in LF3cmos:
+    c5Label.append(i)
+    c5Label[count] = tk.Label(myLF3, text = i, padx = 5, pady = 5)
+    c5Label[count].grid(row = count, column = 0)
+    count = count + 1  
+    
+count = 0
+for i in LF3cmos_value:
+    c6Label.append(i)
+    c6Label[count] = tk.Label(myLF3, text = i, padx = 5, pady = 5)
+    c6Label[count].grid(row = count, column = 1)
+    count = count + 1    
 
 
 '''
