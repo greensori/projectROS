@@ -50,15 +50,18 @@ i2c registers
 0x06 = I/O Mode 0-7 set register – Default = 0xFF (all inputs), (0 = output, 1 = input)
 0x07 = I/O Mode 8-15 set register – Default = 0xFF (all inputs), (0 = output, 1 = input)
 
-#add this line
+#add this line 
 
 
 """
 
-import serial
+#/Connection/serialROS.py
+from Connection.serialROS import *
+#/imageCV.myCOMS.py
+from imageCV.myCMOS import *
+
 import time
 
-import cv2
 
 import tkinter as tk
 from PIL import ImageGrab, Image, ImageTk
@@ -70,37 +73,23 @@ initStat = ['status', 'connect', 'connect', 'openDrain', 'connect', 'notin', 'OU
 
 initBuffer = ['bufferSize', '0', '0', '0', '0', '0', '0', '0', '0', '0']
 
+LF2body = ['table', 'mgf', 'gam', 'gys', 'massCenter', 'contactAngle'
+           , 'flatness', 'vibration', 'motionRange', 'detectedRange']
+
+LF2body_value = ['value', '0', '0', '0', '0', '0', '0', '0', '0', '0']
+
+LF3cmos = ['detectedFeature', 'targetcnt', 'targetDistance', 'signalStrength', 'latency(ms)']
+
 c0Label = []
 c1Label = []
 c2Label = []
+c3Label = []
+c4Label = []
+
 
 #img = Image.open('temp.jpg')
 
-def closePort():
-    try:
-        device = serial.Serial('COM11', 9600)
-        print ('connect')
-    except:
-        device.close()
-        device = serial.Serial('COM11', 9600)
-        print ('reconnect')
 
-
-def getCam():
-    cap = cv2.VideoCapture(0)
-    while(True):
-        # Capture frame-by-frame
-        ret, frame = cap.read()
-    
-        # Our operations on the frame come here
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-        # Display the resulting frame
-        cv2.imshow('frame',gray)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-    cap.release()
-    cv2.destroyAllWindows()
 
 def serialConnect():
     print ('you click serialConnect butotn')
@@ -115,6 +104,7 @@ def serialClose():
 
 def autoupdate():
     return
+
 
 App = tk.Tk()
 App.title('myController')
@@ -132,9 +122,6 @@ topmenu.add_cascade(label = 'portManager', menu = filemenu)
 
 topmenu.add_cascade(label = 'ImageDetect', menu = filemenu)
 App.config(menu = topmenu)
-Entry1 = tk.Entry(App, width = 12)
-Entry1.insert(0, '11222')
-Entry1.grid(row = 0, column = 99)
 
 #making colum0label 
 
@@ -143,7 +130,7 @@ myLF1.grid(row = 0, column = 0, padx = 15, pady = 5)
 #myLF1.place(x = 10, y = 10)
 count = 0
 for i in portName:
-    print (count)
+    #print (count)
     c0Label.append(int(count))
     c0Label[count]= tk.Label(myLF1, text = i, padx = 5, pady = 5)
     c0Label[count].grid(row = count, column = 0)
@@ -162,12 +149,36 @@ for i in initBuffer:
     count = count + 1
 
 #making 2nd labelframe
-myLF2 = tk.LabelFrame(App, text = 'yukiho2', padx = 2, pady = 2, labelanchor = 'n')
+myLF2 = tk.LabelFrame(App, text = 'bodyStatus', padx = 2, pady = 2, labelanchor = 'n')
 myLF2.grid(row = 0, column = 1, padx = 15, pady = 5)
+count = 0
+for i in LF2body:
+    c3Label.append(i)
+    c3Label[count] = tk.Label(myLF2, text = i, padx = 5, pady = 5)
+    c3Label[count].grid(row = count, column = 0)
+    count = count + 1
+
+count = 0
+for i in LF2body_value:
+    c3Label.append(i)
+    c3Label[count] = tk.Label(myLF2, text = i, padx = 5, pady = 5)
+    c3Label[count].grid(row = count, column = 1)
+    count = count + 1    
+
+#making 3rd labelFrame
+myLF3 = tk.LabelFrame(App, text = 'cmosStatus', padx = 2, pady = 2, labelanchor = 'n')
+myLF3.grid(row = 0, column = 2, padx = 15, pady = 5)
+c4Label = tk.Label(myLF3, text = 'detectedFeature', padx = 5, pady = 5)
+c4Label.grid(row = 0, column = 0)
+c5Label = tk.Label(myLF3, text = 'targetDistance', padx = 5, pady = 5)
+c5Label.grid(row = 1, column = 0)
+
+
+'''
 Entry2 = tk.Entry(myLF2, width = 12)
 Entry2.insert(0, '11222')
 Entry2.grid(row = 0, column = 99)
-
+'''
 
 T1var = tk.IntVar()
 T1check = tk.Checkbutton(App, text = 'starter', variable = T1var)
