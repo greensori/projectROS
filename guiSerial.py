@@ -428,11 +428,12 @@ T1var = tk.IntVar()
 ##check box acrion #############################
 
 
-App.after(1, autoupdate)
+App.after(50, serialTester)
     
 
 if __name__ == '__main__':
     #aa()
+    App.after(50, serialTester)
     App.protocol("WM_DELETE_WINDOW", on_closing)
     App.mainloop()
     print ('App close')
