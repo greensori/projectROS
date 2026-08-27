@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+   # -*- coding: utf-8 -*-
 """
 Created on Sat Nov  3 12:16:20 2018
 
@@ -6,6 +6,10 @@ Created on Sat Nov  3 12:16:20 2018
 """
 
 import serial
+
+
+
+
 
 def closePort():
     try:
@@ -21,4 +25,4 @@ def gl():
     
 
 if __name__ == '__main__':
-    gl()
+    closePort()

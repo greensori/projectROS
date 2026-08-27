@@ -1,70 +1,10 @@
    # -*- coding: utf-8 -*-
-"""
-Created on Mon Oct 22 23:25:38 2018
 
-@author: Green
-
-Controller for using in jetson tx1 with cti carrier
-
-uart0 /dev/ttyS0
-
-uart1 /dev/ttyTHS2
-
-
-
-Port - ttyS0 (UART0)
-Stat - open
-I/O - 
-
-Port - ttyTHS2 (UART1)
-stat - open
-
-Port - i2c (master)
-stat - Open Drain
-input(0-7) : 0x00
-input(8-15) : 0x01
-
-port - cap(CMOS)
-stat - camera
-resolution
-
-port - GPIO (H13)
-stat - gpio_pq4_pi4
-
-port - GPIO (G14)
-stat - can_gpio2_paa2
-
-port - GPIO (A22)
-stat - gpio_mdm7_py6
-
-port -GPIO (A23)
-stat - gpio_mdm1_py0
-
-
-i2c registers
-
-0x00 = Input 0 – 7  Status Register (Not all inputs/outputs are implemented on all carriers see the GPIO Reference Table)
-0x01 = Input  8 – 15 Status Register (Not all inputs/outputs are implemented on all carriers see the GPIO Reference Table)
-0x02 = Output 0-7 Register – Default = 0xFF, 0 = GND, 1 = 3.3V HIGH (only valid if I/O set to an output in register 0x06)
-0x03 = Output 8-15 Register – Default = 0xFF, 0 = GND, 1 = 3.3V HIGH (only valid if I/O set to an output in register 0x06)
-0x06 = I/O Mode 0-7 set register – Default = 0xFF (all inputs), (0 = output, 1 = input)
-0x07 = I/O Mode 8-15 set register – Default = 0xFF (all inputs), (0 = output, 1 = input)
-
-#add this line 
-
-
-"""
-
-#/Connection/serialROS.py
-#from Connection.serialROS import *
-#/imageCV.myCOMS.py
-#from imageCV.myCMOS import *
 
 import time
 
 
 import tkinter as tk
-#from PIL import ImageGrab, Image, ImageTk
 import serial
 import serial.tools.list_ports
 import threading
@@ -79,10 +19,10 @@ initStat = ['status', 'connect', 'connect', 'openDrain', 'connect'
             , 'notin', 'gpio_pq4_pi4', 'can_gpio2_paa2', 'gpio_mdm7_py6', 'gpio_mdm1_py0']
 initBuffer = ['bufferSize', '0', '0', '0', '0', '0', '0', '0', '0', '0']
 
-LF2body = ['table', 'mgf', 'gam', 'gys', 'massCenter', 'contactAngle'
-           , 'flatness', 'vibration', 'motionRange', 'detectedRange']
+LF2body = ['menuName', '-', '-', '-', '-', '-'
+           , '-', '-', '-', '-']
 
-LF2body_value = ['value', '0', '0', '0', '0', '0', '0', '0', '0', '0']
+LF2body_value = ['now?', '0', '0', '0', '0', '0', '0', '0', '0', '0']
 
 
 
@@ -113,31 +53,6 @@ portlist = ['portlist']
 for i in range(1, 10):
     portlist.append('port%d' %i)
 
-
-
-#img = Image.open('temp.jpg')
-
-
-'''
-def serialConnect():
-    print ('you click serialConnect button')
-    global port_connected_checker
-    
-    global portlist
-    for i in range(1, 10):
-        try:
-            baudrate = 9600 
-            portlist[i] = serial.Serial('COM%d' %i, baudrate)
-            c6Label[i].configure(text = 'Connected')
-            port_connected_checker[i] = '1'
-            
-            print ('connected port %d' %i)
-        except:
-            c6Label[i].configure(text = 'Disconnected')
-            port_connected_checker[i] = '0'
-            print ('cant conect com%d' %i)
-    return portlist
-'''
 
 
 def autoDetectAndConnect():
@@ -286,27 +201,6 @@ def serialTester():
     return
 
 
-'''
-def serialTester():
-    global portlist, c6Label
-
-    ser = portlist[6]
-
-    # 1. 수신 버퍼에 읽을 데이터가 있는지 먼저 확인
-    if ser.in_waiting > 0:
-        # 2. 줄 단위로 읽고 바이트를 문자열로 변환 (개행문자 및 공백 제거)
-        raw_msg = ser.readline()
-        msg = raw_msg.decode("utf-8", errors="ignore").strip()
-
-        # 3. GUI 라벨 업데이트 및 콘솔 출력
-        c6Label[6].configure(text=msg)
-        print(msg)
-
-
-'''
-
-
-
 
 def autoupdate():
     print ('enter auto update')
@@ -333,10 +227,12 @@ def c7entrySender():
             else:
                 print(f"COM{i} 포트 미연결 (데이터: {input_text_tmp})")
 #    portlist[6].write(text.encode('utf-8'))
-    
-
-    
     return
+
+
+
+
+
 
 App = tk.Tk()
 App.title('myController')
@@ -385,7 +281,7 @@ for i in initBuffer:
     count = count + 1
 
 #making 2nd labelframe
-myLF2 = tk.LabelFrame(App, text = 'thisMachine', width = 150, height =320, padx = 2, pady = 2, labelanchor = 'n')
+myLF2 = tk.LabelFrame(App, text = 'orderQueue', width = 150, height =320, padx = 2, pady = 2, labelanchor = 'n')
 myLF2.grid_propagate(False)
 myLF2.grid(row = 0, column = 1, padx = 15, pady = 5)
 count = 0
@@ -405,7 +301,7 @@ for i in LF2body_value:
 #making 3rd labelFrame
 myLF3 = tk.LabelFrame(App, text = 'Serial:COM(No.)',width = 225, height =320, padx = 2, pady = 2, labelanchor = 'n')
 myLF3.grid_propagate(False)
-myLF3.grid(row = 0, column = 3, padx = 15, pady = 5)
+myLF3.grid(row = 0, column = 2, padx = 15, pady = 5)
 count = 0
 for i in LF3cmos:
     c5Label.append(i)
@@ -420,13 +316,49 @@ for i in LF3cmos_value:
     c6Label[count].grid(row = count, column = 1)
     count = count + 1    
     
+
+def send_midbtn_command(mcu_id, gcode):
+    print(f"[전송] MCU-{mcu_id} -> {gcode}")
+    
+    
+menu_counts = {
+        "닭" : 0,
+        "목살" : 0,
+        "떡갈" : 0,
+        "제육" : 0,
+        "야채" : 0
+        }
+
+menu_buttons = {}
+    
+    
+button_configs = [
+    {"text": "닭(  0  개)", "action": lambda: send_midbtn_command(1, "G28")},
+    {"text": "목살( 0 개)", "action": lambda: send_midbtn_command(1, "G1 X10 F1000")},
+    {"text": "떡갈( 0 개)", "action": lambda: send_midbtn_command(2, "M104 S200")},
+    {"text": "제육( 0 개)", "action": lambda: send_midbtn_command(3, "M106 S255")},
+    {"text": "야채( 0 개)", "action": lambda: send_midbtn_command(1, "M112")},
+    {"text": "주 문 완 료", "action": lambda: send_midbtn_command(1, "M112")},
+    {"text": "초  기  화", "action": lambda: send_midbtn_command(1, "M112")}
+]
     
 mid_frame = tk.Frame(App, pady = 10)
 mid_frame.grid(row = 1, column = 0, columnspan = 3, sticky="ew", padx = 5, pady  = 10)
-for i in range(5):
-    mid_frame.columnconfigure(i, weight=1)  # 너비 균등 분할
-    btn = tk.Button(mid_frame, text=f"버튼 {i+1}")
+
+buttons = []
+for i, cfg in enumerate(button_configs):
+    mid_frame.columnconfigure(i, weight=1)
+    btn = tk.Button(
+        mid_frame,
+        text=cfg["text"],
+        command=cfg["action"]  # 딕셔너리에 정의된 동작 연결
+    )
     btn.grid(row=0, column=i, padx=3, sticky="ew")
+    buttons.append(btn)
+
+
+
+
 
 
 count = 0 #0 for label
@@ -445,6 +377,26 @@ label_tmp3.grid(row = 5, column = 0, padx = 15, pady = 5, stick = 'w')
 
 label_tmp3 = tk.Label(App, text = 'order __ in', fg = 'blue', font=('arial', 15))
 label_tmp3.grid(row = 6, column = 0, padx = 15, pady = 5, stick = 'w')
+
+label_tmp3 = tk.Label(App, text = 'order __ in', fg = 'blue', font=('arial', 15))
+label_tmp3.grid(row = 7, column = 0, padx = 15, pady = 5, stick = 'w')
+
+
+
+
+def update_bottom_log(text):
+    """하단 5개 라벨을 FIFO 방식으로 한 칸씩 올리며 새 로그 출력"""
+    global bottom_labels
+    if not bottom_labels:
+        return
+    # 0번부터 3번 라벨의 텍스트를 다음 라벨로 복사 (밀어올리기)
+    for i in range(len(bottom_labels) - 1):
+        bottom_labels[i].configure(text=bottom_labels[i+1].cget("text"))
+    # 맨 마지막 라벨에 새 메시지 반영
+    bottom_labels[-1].configure(text=text)
+
+
+
 
 #c7Entry.append(1)
 #c7Entry[0] = tk.Label(myLF3, text = LF3cmos_entry[0], padx = 5, pady = 5)
@@ -473,17 +425,8 @@ def on_closing():
 # Tkinter 메인 루프 전에 프로토콜 등록
 
 
-'''
-Entry2 = tk.Entry(myLF2, width = 12)
-Entry2.insert(0, '11222')
-Entry2.grid(row = 0, column = 99)
-'''
-
 T1var = tk.IntVar()
-'''
-T1check = tk.Checkbutton(App, text = 'starter', variable = T1var)
-T1check.grid(row = 11, column = 0)
-'''
+
 ##check box acrion #############################
 
 
