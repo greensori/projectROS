@@ -66,7 +66,7 @@ def autoDetectAndConnect():
         port_name = f'COM{i}'
         if port_name in available_ports:
             try:
-                portlist[i] = serial.Serial(port_name, 9600, timeout=0.1)
+                portlist[i] = serial.Serial(port_name, 115200, timeout=0.1)
                 c6Label[i].configure(text='Connected')
                 port_connected_checker[i] = '1'
             except serial.SerialException:
@@ -170,33 +170,32 @@ def serialCommend():
 
 def serialTester():
     global portlist, c6Label, port_connected_checker
-
+    
     for i in range(1, 10):
-        ser = portlist[i]
-
-        # 1. 포트가 열려 있는지 확인
-        if ser is not None and ser.is_open:
-            try:
-                # 2. 수신 버퍼에 쌓인 데이터 바이트 수 확인
-                bytes_available = ser.in_waiting
-                if bytes_available > 0:
-                    # 버퍼에 쌓인 전체 데이터를 한 번에 읽기
-                    raw_data = ser.read(bytes_available)
-
-                    # UTF-8 디코딩 (에러 문자 무시 및 공백 정리)
-                    rx_text = (
-                        raw_data.decode("utf-8", errors="ignore")
-                        .replace("\r", "")
-                        .strip()
-                    )
-
-                    if rx_text:
-                        print(f"[RX] COM{i}: {rx_text}")
-                        # GUI 라벨 텍스트 업데이트
-                        c6Label[i].configure(text=rx_text)
-
-            except Exception as e:
-                print(f"COM{i} 데이터 수신 에러: {e}")
+            ser = portlist[i]
+    
+            # 1. 포트가 유효하고 열려 있는지 확인
+            if ser is not None and ser.is_open:
+                    try:
+                        # 2. 버퍼에 쌓인 모든 줄을 빠르게 비우며 처리
+                        while ser.in_waiting > 0:
+                            # 줄바꿈 단위로 읽기 (포트 생성 시 timeout=0.02 이하 권장)
+                            raw_line = ser.readline()
+                            rx_text = raw_line.decode("utf-8", errors="ignore").strip()
+            
+                            if rx_text:
+                                print(f"[RX] COM{i}: {rx_text}")
+                                # GUI 라벨에 최신 수신값 반영
+                                c6Label[i].configure(text=rx_text)
+                                
+                                # (선택) 하단 5줄 모니터링 라벨에도 로그 전달
+                                # update_bottom_log(f"COM{i}: {rx_text}")
+            
+                    except (serial.SerialException, OSError) as e:
+                        print(f"COM{i} 통신 끊김/에러: {e}")
+                        c6Label[i].configure(text="Error", fg="red")
+                    except Exception as e:
+                        print(f"COM{i} 데이터 처리 에러: {e}")
     
     return
 
@@ -247,7 +246,7 @@ filemenu.add_command(label = 'connect', command = autoDetectAndConnect)
 filemenu.add_command(label = 'disconnect', command = serialDisconnectAll)
 #filemenu.add_seperator()
 filemenu.add_command(label = 'serialwrite_send', command = serialCommend)
-filemenu.add_command(label = 'serialRead_port6', command = serialTester)
+filemenu.add_command(label = 'serialRead_buff', command = serialTester)
 
 topmenu.add_cascade(label = 'portManager', menu = filemenu)
 
