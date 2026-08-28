@@ -67,6 +67,10 @@ def autoDetectAndConnect():
         if port_name in available_ports:
             try:
                 portlist[i] = serial.Serial(port_name, 115200, timeout=0.1)
+                portlist[i].dtr = False
+                portlist[i].rts = False
+                portlist[i].reset_input_buffer()
+                portlist[i].reset_output_buffer()
                 c6Label[i].configure(text='C')
                 port_connected_checker[i] = '1'
             except serial.SerialException:
@@ -210,20 +214,34 @@ def c7entrySender():
     #send MCU to entry data max len 8
     global portlist, c7Entry
     
-    for i in range(1, 10):
-        input_text_tmp = c7Entry[i].get().strip()
-        if input_text_tmp:
-            print (input_text_tmp)
-            ser = portlist[i]
-            if ser is not None and ser.is_open:
-                try:
-                    send_packet = (input_text_tmp + "\r\n").encode("utf-8")
-                    ser.write(send_packet)
-                    print(f"[TX] COM{i} -> {input_text_tmp} ({len(input_text_tmp)} bytes)")
-                except Exception as e:
-                    print(f"COM{i} 전송 에러: {e}")
-            else:
-                print(f"COM{i} 포트 미연결 (데이터: {input_text_tmp})")
+    max_range = min(len(c7Entry), len(portlist))
+    
+    for i in range(1, max_range):
+        entry_widget = c7Entry[i]
+        
+        if isinstance(entry_widget, tk.Entry):
+            input_text_tmp = entry_widget.get().strip()
+            
+            if input_text_tmp:
+                print(f"[DEBUG] 입력 감지 (COM{i}): {input_text_tmp}")
+                ser = portlist[i]
+                
+                # 1. portlist[i] 객체 상태 확인
+                if ser is not None:
+                    print(f"[DEBUG] COM{i} 포트 객체 존재함. is_open = {ser.is_open}")
+                    if ser.is_open:
+                        try:
+                            send_packet = (input_text_tmp + "\r\n").encode("utf-8")
+                            ser.write(send_packet)
+                            ser.flush()
+                            print(f"[TX 성공] COM{i} -> {input_text_tmp}")
+                            entry_widget.delete(0, tk.END)
+                        except Exception as e:
+                            print(f"[TX 에러] COM{i} 쓰기 실패: {e}")
+                    else:
+                        print(f"[확인 필요] COM{i} 객체는 있으나 포트가 닫혀(closed) 있습니다.")
+                else:
+                    print(f"[확인 필요] COM{i}에 연결된 포트 객체가 없습니다 (None). 'connect'를 먼저 눌렀는지 확인하세요.")
 #    portlist[6].write(text.encode('utf-8'))
     return
 
@@ -428,12 +446,12 @@ T1var = tk.IntVar()
 ##check box acrion #############################
 
 
-App.after(50, serialTester)
+#App.after(50, serialTester)
     
 
 if __name__ == '__main__':
     #aa()
-    App.after(50, serialTester)
+    #App.after(50, serialTester)
     App.protocol("WM_DELETE_WINDOW", on_closing)
     App.mainloop()
     print ('App close')
