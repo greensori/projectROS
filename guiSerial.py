@@ -52,12 +52,9 @@ MENU_ACTIONS = [
 menu_counter = [0, 0, 0, 0]
 menu_buttons = []
 
-portName = ['portName', 'ttyS0 (UART0)', 'ttyTHS2 (UART1)', 'i2c (master)',
-            'USB 3.0 (CMOS)', 'USB OTG', 'GPIO (H13)', 'GPIO (G14)',
-            'GPIO (A22)', 'GPIO (A23)']
-initStat = ['status', 'connect', 'connect', 'openDrain', 'connect',
-            'notin', 'gpio_pq4_pi4', 'can_gpio2_paa2', 'gpio_mdm7_py6', 'gpio_mdm1_py0']
-initBuffer = ['bufferSize', '0', '0', '0', '0', '0', '0', '0', '0', '0']
+portName = ['주문대기'] + ['-'] * 9
+initStat = ['세트대기'] + ['-'] * 9
+initBuffer = ['조리대기'] + ['-'] * 9
 
 LF2body = ['menuName'] + ['-'] * 9
 LF2body_value = ['now?'] + ['0'] * 9
@@ -125,7 +122,7 @@ class ConsoleRedirector:
             self.original_stream.flush()
 
 # ----------------------------------------------------
-# 3. 시리얼 통신 핵심 함수
+# 3. 시리얼 통신 핵심 함수 (완료 수정 금지)
 # ----------------------------------------------------
 def autoDetectAndConnect():
     """감지된 실제 포트를 Slot 1부터 차례로 자동 할당"""
@@ -366,7 +363,7 @@ def process_next_item():
         App.after(500, process_next_item)
 
 # ----------------------------------------------------
-# 6. GUI 레이아웃 구성
+# 6. GUI 레이아웃 구성 (변경 금지)
 # ----------------------------------------------------
 App = tk.Tk()
 App.title('Food Automation Controller')
