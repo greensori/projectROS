@@ -3,16 +3,27 @@
 import io
 import sys
 import time
+import threading
 import tkinter as tk
 from tkinter import ttk
+from collections import deque
 import serial
 import serial.tools.list_ports
 from PIL import Image, ImageTk
 
+# 시스템 모니터링 라이브러리
+import psutil
+
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    HAS_NVML = True
+except Exception:
+    HAS_NVML = False
+
 # ----------------------------------------------------
 # 1. 3단계 G-code 시퀀스 정의
 # ----------------------------------------------------
-# 1단계: 공통 이송 시퀀스 (상대좌표 G91 명시 필수)
 AXIS_GCODES = [
     "G91",
     "G1 X1000 F1200",
@@ -21,7 +32,6 @@ AXIS_GCODES = [
     "G1 Y1500 F1200"
 ]
 
-# 2단계: 메뉴별 조리 시퀀스
 RECIPE_GCODES = {
     "닭고기": [
         "G91",
@@ -52,7 +62,6 @@ RECIPE_GCODES = {
     ]
 }
 
-# 3단계: 완성 및 배출 시퀀스
 BOARD_SYNC_GCODES = [
     "G91",
     "G1 Z0 F800",
@@ -70,6 +79,8 @@ menu_buttons = []
 
 table_orders = [{"count": 0, "amount": 0} for _ in range(5)]
 table_buttons = []
+
+dummy_buttons = []
 
 NUM_SLOTS = 14
 
@@ -96,10 +107,8 @@ port_names = [''] * (NUM_SLOTS + 1)
 rx_buffers = [''] * (NUM_SLOTS + 1)
 board_slot_map = {}
 
-slot_task_state = {
-    i: {"lines": [], "idx": 0, "waiting_ok": False, "on_done": None}
-    for i in range(1, NUM_SLOTS + 1)
-}
+slot_queues = {i: deque() for i in range(1, NUM_SLOTS + 1)}
+slot_current_job = {i: None for i in range(1, NUM_SLOTS + 1)}
 
 cam_display_labels = []
 cam_photo_images = [None, None, None]
@@ -107,6 +116,16 @@ cam_photo_images = [None, None, None]
 is_running = True
 orig_stdout = sys.stdout
 orig_stderr = sys.stderr
+
+# 시스템 리소스 상태 보관 변수
+current_sys_metrics = {
+    "cpu": 0.0,
+    "ram_pct": 0.0,
+    "ram_used_gb": 0.0,
+    "ram_total_gb": 0.0,
+    "gpu_load": "N/A",
+    "vram_used": "N/A"
+}
 
 # ----------------------------------------------------
 # 2. 콘솔 출력 리다이렉터
@@ -144,7 +163,7 @@ class ConsoleRedirector:
             self.original_stream.flush()
 
 # ----------------------------------------------------
-# 3. G-code 전송 엔진
+# 3. 비동기 큐잉 G-code 엔진
 # ----------------------------------------------------
 def execute_gcode_sequence(slot_id, gcodes, on_done=None):
     if not (1 <= slot_id <= NUM_SLOTS):
@@ -156,35 +175,51 @@ def execute_gcode_sequence(slot_id, gcodes, on_done=None):
             on_done()
         return
 
-    task = slot_task_state[slot_id]
-    task["lines"] = lines
-    task["idx"] = 0
-    task["waiting_ok"] = False
-    task["on_done"] = on_done
+    job = {
+        "lines": lines,
+        "idx": 0,
+        "waiting_ok": False,
+        "on_done": on_done
+    }
+    slot_queues[slot_id].append(job)
 
-    _send_next_line(slot_id)
+    if slot_current_job[slot_id] is None:
+        _process_next_job(slot_id)
 
-def _send_next_line(slot_id):
+def _process_next_job(slot_id):
     if not is_running:
         return
-    task = slot_task_state[slot_id]
-    if task["idx"] < len(task["lines"]):
-        cmd = task["lines"][task["idx"]]
-        task["waiting_ok"] = True
+    if slot_queues[slot_id]:
+        slot_current_job[slot_id] = slot_queues[slot_id].popleft()
+        _send_job_line(slot_id)
+    else:
+        slot_current_job[slot_id] = None
+
+def _send_job_line(slot_id):
+    if not is_running:
+        return
+    job = slot_current_job[slot_id]
+    if job is None:
+        return
+
+    if job["idx"] < len(job["lines"]):
+        cmd = job["lines"][job["idx"]]
+        job["waiting_ok"] = True
         send_slot_command(slot_id, cmd)
     else:
-        callback = task["on_done"]
-        task["on_done"] = None
-        task["waiting_ok"] = False
+        callback = job["on_done"]
+        job["on_done"] = None
+        job["waiting_ok"] = False
         if callback:
             callback()
+        _process_next_job(slot_id)
 
 def notify_slot_ok_received(slot_id):
-    task = slot_task_state.get(slot_id)
-    if task and task["waiting_ok"]:
-        task["waiting_ok"] = False
-        task["idx"] += 1
-        App.after(10, lambda: _send_next_line(slot_id))
+    job = slot_current_job.get(slot_id)
+    if job and job["waiting_ok"]:
+        job["waiting_ok"] = False
+        job["idx"] += 1
+        App.after(10, lambda: _send_job_line(slot_id))
 
 # ----------------------------------------------------
 # 4. 시리얼 통신 핵심 함수
@@ -265,7 +300,6 @@ def serialTester():
                                     board_slot_map[b_id] = i
                                     print(f"[동기화 감지] STM32 보드 {b_id}번 -> Slot {i} 매핑 완료")
 
-                            # ok 수신 판단 조건: 단독 'OK'이거나 라인이 'OK'로 끝나는 경우 처리
                             if clean_line == "OK" or clean_line.endswith("OK"):
                                 notify_slot_ok_received(i)
 
@@ -300,11 +334,14 @@ def c7entrySender():
                 widget.delete(0, tk.END)
 
 # ----------------------------------------------------
-# 5. Order Queue & Connection Info 파이프라인 관리
+# 5. Order Queue & Pipeline
 # ----------------------------------------------------
-active_orders = []
-overflow_orders = []
-is_transferring = False
+active_orders = []       
+overflow_orders = []     
+
+is_transferring = False  
+discharge_queue = deque() 
+is_discharging = False   
 
 STATUS_COLORS = {
     "대기": "gray",
@@ -442,12 +479,12 @@ def schedule_pipeline():
     while len(active_orders) < NUM_SLOTS and overflow_orders:
         promoted_item = overflow_orders.pop(0)
         active_orders.append(promoted_item)
-        print(f"[대기열 승격] T{promoted_item['table']} {promoted_item['name']} -> 활성 조리 큐(LF2) 진입")
+        print(f"[대기열 승격] T{promoted_item['table']} {promoted_item['name']} -> 활성 큐(LF2) 진입")
 
     sync_order_queue_ui()
     sync_connection_info_ui()
 
-    if not is_transferring:
+    if not is_transferring and not is_discharging:
         pending_item = None
         for item in active_orders:
             if item["status"] == "대기":
@@ -458,7 +495,7 @@ def schedule_pipeline():
             is_transferring = True
             pending_item["status"] = "이송중"
             sync_order_queue_ui()
-            print(f"\n[1단계 이송] T{pending_item['table']} {pending_item['name']} (이송 시작)")
+            print(f"\n[1단계 이송 시작] T{pending_item['table']} {pending_item['name']}")
 
             execute_gcode_sequence(
                 slot_id=target_slot,
@@ -467,12 +504,15 @@ def schedule_pipeline():
             )
 
 def start_cooking_phase(item):
-    """2단계: 조리 단계 실행"""
+    global is_transferring
     target_slot = board_slot_map.get(1, 1)
 
     item["status"] = "조리중"
     sync_order_queue_ui()
-    print(f"\n[2단계 조리] T{item['table']} {item['name']} (레시피 시작)")
+    print(f"\n[2단계 조리 진입] T{item['table']} {item['name']} (이송 락 해제)")
+
+    is_transferring = False
+    schedule_pipeline()
 
     recipe = RECIPE_GCODES.get(item["name"], ["G4 P500"])
     execute_gcode_sequence(
@@ -482,56 +522,143 @@ def start_cooking_phase(item):
     )
 
 def start_finishing_phase(item):
-    """3단계: 완성 및 배출"""
-    target_slot = board_slot_map.get(1, 1)
     item["status"] = "완성"
     sync_order_queue_ui()
-    print(f"\n[3단계 완성] T{item['table']} {item['name']} (배출 시작)")
+    print(f"\n[3단계 완성] T{item['table']} {item['name']} (배출 큐 등록)")
 
+    discharge_queue.append(item)
+    process_discharge_queue()
+
+def process_discharge_queue():
+    global is_discharging
+    if is_discharging or not discharge_queue:
+        return
+
+    if is_transferring:
+        App.after(100, process_discharge_queue)
+        return
+
+    is_discharging = True
+    target_item = discharge_queue.popleft()
+    target_slot = board_slot_map.get(1, 1)
+
+    print(f"[배출 시작] T{target_item['table']} {target_item['name']}")
     execute_gcode_sequence(
         slot_id=target_slot,
         gcodes=BOARD_SYNC_GCODES,
-        on_done=lambda it=item: complete_order(it)
+        on_done=lambda it=target_item: complete_order(it)
     )
 
 def complete_order(item):
-    """주문 완료 시 1단계 이송 락 해제 및 다음 주문 스케줄링"""
-    global is_transferring
+    global is_discharging
     print(f"[조리/배출 완료] T{item['table']} {item['name']}")
     
-    # 단일 보드(타깃 슬롯 1번) 기준 배출이 끝난 후 이송 락을 풀어야 충돌을 방지합니다.
-    is_transferring = False
+    is_discharging = False
 
     def _remove():
         if item in active_orders:
             active_orders.remove(item)
             sync_order_queue_ui()
+            process_discharge_queue()
             schedule_pipeline()
 
-    App.after(1000, _remove)
+    App.after(800, _remove)
 
 # ----------------------------------------------------
-# 6. GUI 레이아웃 구성
+# 6. 시스템 리소스 모니터링 스레드 및 UI 갱신
+# ----------------------------------------------------
+def background_system_monitor():
+    """백그라운드에서 주기적으로 CPU, RAM, GPU 정보를 수집하여 캐싱"""
+    psutil.cpu_percent(interval=None)  # 초기 워밍업
+    while is_running:
+        try:
+            cpu = psutil.cpu_percent(interval=0.5)
+            vm = psutil.virtual_memory()
+            ram_pct = vm.percent
+            ram_used = vm.used / (1024 ** 3)
+            ram_tot = vm.total / (1024 ** 3)
+
+            gpu_load_str = "N/A"
+            vram_str = "N/A"
+
+            if HAS_NVML:
+                try:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    gpu_load_str = f"{util.gpu}%"
+
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    vram_used_gb = mem_info.used / (1024 ** 3)
+                    vram_tot_gb = mem_info.total / (1024 ** 3)
+                    vram_pct = (mem_info.used / mem_info.total) * 100
+                    vram_str = f"{vram_pct:.1f}% ({vram_used_gb:.1f}/{vram_tot_gb:.1f} GB)"
+                except Exception:
+                    gpu_load_str = "N/A"
+                    vram_str = "N/A"
+
+            current_sys_metrics["cpu"] = cpu
+            current_sys_metrics["ram_pct"] = ram_pct
+            current_sys_metrics["ram_used_gb"] = ram_used
+            current_sys_metrics["ram_total_gb"] = ram_tot
+            current_sys_metrics["gpu_load"] = gpu_load_str
+            current_sys_metrics["vram_used"] = vram_str
+
+        except Exception:
+            pass
+
+        time.sleep(0.5)
+
+def update_system_statusbar():
+    """메인 UI의 최하단 상태표시줄 레이블 텍스트 갱신"""
+    if not is_running:
+        return
+
+    cpu = current_sys_metrics["cpu"]
+    ram_pct = current_sys_metrics["ram_pct"]
+    ram_used = current_sys_metrics["ram_used_gb"]
+    ram_tot = current_sys_metrics["ram_total_gb"]
+    gpu_load = current_sys_metrics["gpu_load"]
+    vram_used = current_sys_metrics["vram_used"]
+
+    status_str = (
+        f" [CPU] {cpu:4.1f}%   |   "
+        f"[RAM] {ram_pct:4.1f}% ({ram_used:.1f}/{ram_tot:.1f} GB)   |   "
+        f"[GPU] {gpu_load}   |   "
+        f"[GPU VRAM] {vram_used}"
+    )
+
+    sys_status_label.config(text=status_str)
+    App.after(1000, update_system_statusbar)
+
+# ----------------------------------------------------
+# 7. GUI 레이아웃 구성
 # ----------------------------------------------------
 App = tk.Tk()
 App.title('Food Automation & Multi-Camera Vision Controller')
 App.resizable(width=True, height=True)
-App.geometry('1280x760+150+60')
+App.geometry('1280x780+150+60')
 
-App.columnconfigure(0, weight=6)
-App.columnconfigure(1, weight=4)
-App.rowconfigure(0, weight=1)
+# 상단 컨테이너 영역과 하단 상태바 영역 분리
+App.columnconfigure(0, weight=1)
+App.rowconfigure(0, weight=1)  # 메인 콘텐츠 영역
+App.rowconfigure(1, weight=0)  # 최하단 시스템 정보 상태바
 
-left_main_panel = tk.Frame(App)
+content_frame = tk.Frame(App)
+content_frame.grid(row=0, column=0, sticky="nsew")
+content_frame.columnconfigure(0, weight=6)
+content_frame.columnconfigure(1, weight=4)
+content_frame.rowconfigure(0, weight=1)
+
+left_main_panel = tk.Frame(content_frame)
 left_main_panel.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
-right_camera_panel = tk.Frame(App, width=480)
+right_camera_panel = tk.Frame(content_frame, width=480)
 right_camera_panel.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
 
 left_main_panel.columnconfigure(0, weight=1)
 left_main_panel.columnconfigure(1, weight=1)
 left_main_panel.columnconfigure(2, weight=1)
-left_main_panel.rowconfigure(4, weight=1)
+left_main_panel.rowconfigure(4, weight=1)  # 콘솔 모니터링 확장
 
 topmenu = tk.Menu(App)
 filemenu = tk.Menu(topmenu, tearoff=0)
@@ -605,9 +732,9 @@ for count, entry_name in enumerate(LF3cmos_entry):
         ))
         c7Entry.append(ent)
 
-# 1층 메뉴 버튼
+# 1층 버튼: 메뉴 카운트 버튼 + 초기화 버튼 (row=1)
 mid_frame = tk.Frame(left_main_panel, pady=2)
-mid_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
+mid_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
 button_specs = [
     {"name": "닭고기", "color": "#d9ead3", "is_reset_btn": False},
@@ -639,9 +766,9 @@ for i, spec in enumerate(button_specs):
         )
     btn.grid(row=0, column=i, padx=2, sticky="ew")
 
-# 2층 테이블 버튼
+# 2층 버튼: 1~5테이블주문 (row=2)
 sub_btn_frame = tk.Frame(left_main_panel, pady=2)
-sub_btn_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
+sub_btn_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
 table_buttons.clear()
 for i in range(5):
@@ -656,7 +783,23 @@ for i in range(5):
     btn.grid(row=0, column=i, padx=2, sticky="ew")
     table_buttons.append(btn)
 
-# 하단 콘솔 모니터링 프레임
+# 3층 버튼: 빈버튼 1~5 (row=3)
+extra_btn_frame = tk.Frame(left_main_panel, pady=2)
+extra_btn_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
+
+dummy_buttons.clear()
+for i in range(5):
+    extra_btn_frame.columnconfigure(i, weight=1)
+    btn = tk.Button(
+        extra_btn_frame,
+        text=f"빈버튼 {i+1}",
+        bg="#f8f9fa",
+        height=2
+    )
+    btn.grid(row=0, column=i, padx=2, sticky="ew")
+    dummy_buttons.append(btn)
+
+# 하단 콘솔 모니터링 프레임 (row=4)
 console_frame = tk.LabelFrame(left_main_panel, text='Console Monitoring', padx=5, pady=3)
 console_frame.grid(row=4, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
 
@@ -683,7 +826,7 @@ sys.stdout = ConsoleRedirector(console_text, orig_stdout, tag='out')
 sys.stderr = ConsoleRedirector(console_text, orig_stderr, tag='error')
 
 # ----------------------------------------------------
-# 7. 우측 대형 카메라 뷰어 영역
+# 8. 우측 카메라 영역
 # ----------------------------------------------------
 right_camera_panel.rowconfigure(0, weight=1)
 right_camera_panel.rowconfigure(1, weight=1)
@@ -706,21 +849,50 @@ def update_camera_views():
     App.after(100, update_camera_views)
 
 # ----------------------------------------------------
-# 8. 종료 처리 및 실행
+# 9. 창 최하단 시스템 정보 상태바 (Status Bar)
+# ----------------------------------------------------
+status_bar_frame = tk.Frame(App, bg="#202020", relief="sunken", bd=1)
+status_bar_frame.grid(row=1, column=0, sticky="ew")
+
+sys_status_label = tk.Label(
+    status_bar_frame,
+    text=" [CPU] 0.0%   |   [RAM] 0.0% (0.0/0.0 GB)   |   [GPU] N/A   |   [GPU VRAM] N/A",
+    font=("Consolas" if sys.platform != "darwin" else "Courier", 9),
+    bg="#202020",
+    fg="#00e676",
+    anchor="w",
+    padx=8,
+    pady=3
+)
+sys_status_label.pack(side="left", fill="x", expand=True)
+
+# ----------------------------------------------------
+# 10. 종료 및 실행
 # ----------------------------------------------------
 def on_closing():
     global is_running
     is_running = False
     serialDisconnectAll()
+    if HAS_NVML:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
     sys.stdout = orig_stdout
     sys.stderr = orig_stderr
     App.destroy()
 
 if __name__ == '__main__':
+    # 백그라운드 리소스 모니터링 데몬 스레드 시작
+    monitor_thread = threading.Thread(target=background_system_monitor, daemon=True)
+    monitor_thread.start()
+
     sync_menu_counter_ui()
     sync_order_queue_ui()
     sync_connection_info_ui()
+    
     App.protocol("WM_DELETE_WINDOW", on_closing)
     App.after(100, serialTester)
     App.after(200, update_camera_views)
+    App.after(300, update_system_statusbar)
     App.mainloop()
