@@ -7,26 +7,26 @@ import tkinter as tk
 from tkinter import ttk
 import serial
 import serial.tools.list_ports
-from PIL import Image, ImageTk  # 카메라 프레임 출력을 위해 필요 (pip install pillow)
+from PIL import Image, ImageTk
 
 # ----------------------------------------------------
 # 1. 3단계 G-code 시퀀스 정의
 # ----------------------------------------------------
+# 1단계: 공통 이송 시퀀스 (상대좌표 G91 명시 필수)
 AXIS_GCODES = [
     "G91",
     "G1 X1000 F1200",
-    "G38 X30000 F800",
     "G1 X100 F600",
     "G1 Z2000 F800",
     "G1 Y1500 F1200"
 ]
 
+# 2단계: 메뉴별 조리 시퀀스
 RECIPE_GCODES = {
     "닭고기": [
         "G91",
         "M103 P3 S2000 F1200 D0",
         "G1 Z-2000 F800",
-        "G38 Z-20000 F500",
         "M42 P4 S1",
         "M42 P5 S1"
     ],
@@ -52,10 +52,10 @@ RECIPE_GCODES = {
     ]
 }
 
+# 3단계: 완성 및 배출 시퀀스
 BOARD_SYNC_GCODES = [
-    "G90",
-    "G1 Z0 F800",
     "G91",
+    "G1 Z0 F800",
     "G1 Y3000 F1200",
     "G1 Z-1000 F800",
     "M42 P4 S0",
@@ -63,18 +63,14 @@ BOARD_SYNC_GCODES = [
 ]
 
 MENU_NAMES = ["닭고기", "목살", "삼겹살", "양념"]
-MENU_PRICE = 6000  # 메뉴 단가 6,000원
+MENU_PRICE = 6000
 
 menu_counter = [0, 0, 0, 0]
 menu_buttons = []
 
-# 테이블별 독립 수량 및 금액 관리 (1~5번 테이블)
 table_orders = [{"count": 0, "amount": 0} for _ in range(5)]
 table_buttons = []
 
-# ====================================================
-# 패널별 슬롯 수: 헤더(0번) + 14개 라인 (1~14번)
-# ====================================================
 NUM_SLOTS = 14
 
 portName = ['주문대기'] + ['-'] * NUM_SLOTS
@@ -93,21 +89,18 @@ for i in range(1, NUM_SLOTS + 1):
     LF3cmos_value.append(f'NOTIN{i}')
     LF3cmos_entry.append(f'Enter{i}')
 
-c0Label = []
-c1Label = []
-c2Label = []
-c3Label = []
-c4Label = []
-c5Label = []
-c6Label = []
-c7Entry = []
+c0Label, c1Label, c2Label, c3Label, c4Label, c5Label, c6Label, c7Entry = [], [], [], [], [], [], [], []
 
 portlist = [None] * (NUM_SLOTS + 1)
 port_names = [''] * (NUM_SLOTS + 1)
 rx_buffers = [''] * (NUM_SLOTS + 1)
 board_slot_map = {}
 
-# 카메라 뷰어용 위젯 및 참조 리스트
+slot_task_state = {
+    i: {"lines": [], "idx": 0, "waiting_ok": False, "on_done": None}
+    for i in range(1, NUM_SLOTS + 1)
+}
+
 cam_display_labels = []
 cam_photo_images = [None, None, None]
 
@@ -151,22 +144,47 @@ class ConsoleRedirector:
             self.original_stream.flush()
 
 # ----------------------------------------------------
-# 3. 비동기 G-code 시퀀스 전송 엔진
+# 3. G-code 전송 엔진
 # ----------------------------------------------------
-def execute_gcode_sequence(slot_id, gcodes, line_delay_ms=100, on_done=None):
+def execute_gcode_sequence(slot_id, gcodes, on_done=None):
+    if not (1 <= slot_id <= NUM_SLOTS):
+        return
+
     lines = [line.strip() for line in gcodes if line.strip() and not line.strip().startswith(";")]
+    if not lines:
+        if on_done:
+            on_done()
+        return
 
-    def _step(idx=0):
-        if not is_running:
-            return
-        if idx < len(lines):
-            send_slot_command(slot_id, lines[idx])
-            App.after(line_delay_ms, lambda: _step(idx + 1))
-        else:
-            if on_done:
-                on_done()
+    task = slot_task_state[slot_id]
+    task["lines"] = lines
+    task["idx"] = 0
+    task["waiting_ok"] = False
+    task["on_done"] = on_done
 
-    _step(0)
+    _send_next_line(slot_id)
+
+def _send_next_line(slot_id):
+    if not is_running:
+        return
+    task = slot_task_state[slot_id]
+    if task["idx"] < len(task["lines"]):
+        cmd = task["lines"][task["idx"]]
+        task["waiting_ok"] = True
+        send_slot_command(slot_id, cmd)
+    else:
+        callback = task["on_done"]
+        task["on_done"] = None
+        task["waiting_ok"] = False
+        if callback:
+            callback()
+
+def notify_slot_ok_received(slot_id):
+    task = slot_task_state.get(slot_id)
+    if task and task["waiting_ok"]:
+        task["waiting_ok"] = False
+        task["idx"] += 1
+        App.after(10, lambda: _send_next_line(slot_id))
 
 # ----------------------------------------------------
 # 4. 시리얼 통신 핵심 함수
@@ -241,15 +259,21 @@ def serialTester():
                             c6Label[i].configure(text=line[:12], foreground="blue")
                             
                             clean_line = line.replace(" ", "").upper()
+
                             for b_id in [1, 2, 3]:
                                 if f"READY_{b_id}" in clean_line or f"READY!{b_id}" in clean_line:
                                     board_slot_map[b_id] = i
                                     print(f"[동기화 감지] STM32 보드 {b_id}번 -> Slot {i} 매핑 완료")
+
+                            # ok 수신 판단 조건: 단독 'OK'이거나 라인이 'OK'로 끝나는 경우 처리
+                            if clean_line == "OK" or clean_line.endswith("OK"):
+                                notify_slot_ok_received(i)
+
             except Exception:
                 c6Label[i].configure(text="Error", foreground="red")
 
     if is_running:
-        App.after(30, serialTester)
+        App.after(15, serialTester)
 
 def send_slot_command(slot_id, gcode):
     if 1 <= slot_id < len(portlist):
@@ -276,11 +300,11 @@ def c7entrySender():
                 widget.delete(0, tk.END)
 
 # ----------------------------------------------------
-# 5. Order Queue(LF2) & Connection Info(LF1) 관리
+# 5. Order Queue & Connection Info 파이프라인 관리
 # ----------------------------------------------------
-active_orders = []       # Order Queue (LF2): 최대 14개 활성 조리 슬롯
-overflow_orders = []     # Connection Info (LF1): 14개 초과 대기열
-is_transferring = False  # 1단계(이송중) 단 1개 독점 락
+active_orders = []
+overflow_orders = []
+is_transferring = False
 
 STATUS_COLORS = {
     "대기": "gray",
@@ -291,7 +315,6 @@ STATUS_COLORS = {
 }
 
 def sync_order_queue_ui():
-    """LF2 (Order Queue): 1~14번 슬롯 표출"""
     for i in range(1, NUM_SLOTS + 1):
         idx = i - 1
         if idx < len(active_orders):
@@ -310,7 +333,6 @@ def sync_order_queue_ui():
             c4Label[i].configure(text=stat_text, fg=color)
 
 def sync_connection_info_ui():
-    """LF1 (Connection Info): 14개 초과 조리 메뉴 요약 표출"""
     table_overflow_stats = {}
     for item in overflow_orders:
         t_id = item["table"]
@@ -436,79 +458,76 @@ def schedule_pipeline():
             is_transferring = True
             pending_item["status"] = "이송중"
             sync_order_queue_ui()
-            print(f"\n[1단계 이송] T{pending_item['table']} {pending_item['name']} (AXIS_GCODES 전송)")
+            print(f"\n[1단계 이송] T{pending_item['table']} {pending_item['name']} (이송 시작)")
 
             execute_gcode_sequence(
                 slot_id=target_slot,
                 gcodes=AXIS_GCODES,
-                line_delay_ms=80,
                 on_done=lambda it=pending_item: start_cooking_phase(it)
             )
 
 def start_cooking_phase(item):
-    global is_transferring
+    """2단계: 조리 단계 실행"""
     target_slot = board_slot_map.get(1, 1)
 
-    is_transferring = False
     item["status"] = "조리중"
     sync_order_queue_ui()
-    print(f"\n[2단계 조리] T{item['table']} {item['name']} (RECIPE_GCODES 전송)")
-
-    schedule_pipeline()
+    print(f"\n[2단계 조리] T{item['table']} {item['name']} (레시피 시작)")
 
     recipe = RECIPE_GCODES.get(item["name"], ["G4 P500"])
     execute_gcode_sequence(
         slot_id=target_slot,
         gcodes=recipe,
-        line_delay_ms=100,
         on_done=lambda it=item: start_finishing_phase(it)
     )
 
 def start_finishing_phase(item):
+    """3단계: 완성 및 배출"""
     target_slot = board_slot_map.get(1, 1)
     item["status"] = "완성"
     sync_order_queue_ui()
-    print(f"\n[3단계 완성] T{item['table']} {item['name']} (BOARD_SYNC_GCODES 전송)")
+    print(f"\n[3단계 완성] T{item['table']} {item['name']} (배출 시작)")
 
     execute_gcode_sequence(
         slot_id=target_slot,
         gcodes=BOARD_SYNC_GCODES,
-        line_delay_ms=100,
         on_done=lambda it=item: complete_order(it)
     )
 
 def complete_order(item):
+    """주문 완료 시 1단계 이송 락 해제 및 다음 주문 스케줄링"""
+    global is_transferring
     print(f"[조리/배출 완료] T{item['table']} {item['name']}")
     
+    # 단일 보드(타깃 슬롯 1번) 기준 배출이 끝난 후 이송 락을 풀어야 충돌을 방지합니다.
+    is_transferring = False
+
     def _remove():
         if item in active_orders:
             active_orders.remove(item)
             sync_order_queue_ui()
             schedule_pipeline()
 
-    App.after(1500, _remove)
+    App.after(1000, _remove)
 
 # ----------------------------------------------------
-# 6. GUI 레이아웃 구성 (폰트 및 윈도우 확대 적용)
+# 6. GUI 레이아웃 구성
 # ----------------------------------------------------
 App = tk.Tk()
 App.title('Food Automation & Multi-Camera Vision Controller')
 App.resizable(width=True, height=True)
-# 14개 행 텍스트 확대를 고려하여 창 해상도를 1366x880으로 여유 있게 설정
-App.geometry('1366x880+100+40')
+App.geometry('1280x760+150+60')
 
-# 최상위 2단 분할
 App.columnconfigure(0, weight=6)
 App.columnconfigure(1, weight=4)
 App.rowconfigure(0, weight=1)
 
 left_main_panel = tk.Frame(App)
-left_main_panel.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+left_main_panel.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
 right_camera_panel = tk.Frame(App, width=480)
-right_camera_panel.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
+right_camera_panel.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
 
-# 좌측 메인 패널 그리드 구성
 left_main_panel.columnconfigure(0, weight=1)
 left_main_panel.columnconfigure(1, weight=1)
 left_main_panel.columnconfigure(2, weight=1)
@@ -525,81 +544,70 @@ filemenu.add_command(label='Send Entries', command=c7entrySender)
 topmenu.add_cascade(label='Port Manager', menu=filemenu)
 App.config(menu=topmenu)
 
-# 공통 폰트 정의 (가독성 향상)
-FONT_HEADER = ("맑은 고딕", 11, "bold")
-FONT_ROW = ("맑은 고딕", 11)
-
-# LF1: Connection Info (14개 라인, 폰트 11pt 확대)
-myLF1 = tk.LabelFrame(left_main_panel, text='Connection Info', padx=4, pady=2, font=("맑은 고딕", 10, "bold"), labelanchor='n')
-myLF1.grid(row=0, column=0, padx=4, pady=3, sticky="nsew")
+# LF1
+myLF1 = tk.LabelFrame(left_main_panel, text='Connection Info', padx=2, pady=1, labelanchor='n')
+myLF1.grid(row=0, column=0, padx=5, pady=3, sticky="nsew")
 
 for count, name in enumerate(portName):
-    fnt = FONT_HEADER if count == 0 else FONT_ROW
-    lbl = tk.Label(myLF1, text=name, padx=4, pady=2, font=fnt)
+    lbl = tk.Label(myLF1, text=name, padx=3, pady=1, font=("Arial", 9))
     lbl.grid(row=count, column=0, sticky='w')
     c0Label.append(lbl)
 
 for count, stat in enumerate(initStat):
-    fnt = FONT_HEADER if count == 0 else FONT_ROW
-    lbl = tk.Label(myLF1, text=stat, padx=4, pady=2, font=fnt)
+    lbl = tk.Label(myLF1, text=stat, padx=3, pady=1, font=("Arial", 9))
     lbl.grid(row=count, column=1)
     c1Label.append(lbl)
 
 for count, buff in enumerate(initBuffer):
-    fnt = FONT_HEADER if count == 0 else FONT_ROW
-    lbl = tk.Label(myLF1, text=buff, padx=4, pady=2, font=fnt)
+    lbl = tk.Label(myLF1, text=buff, padx=3, pady=1, font=("Arial", 9))
     lbl.grid(row=count, column=2)
     c2Label.append(lbl)
 
-# LF2: Order Queue (14개 라인, 폰트 11pt 확대)
-myLF2 = tk.LabelFrame(left_main_panel, text='Order Queue', padx=4, pady=2, font=("맑은 고딕", 10, "bold"), labelanchor='n')
-myLF2.grid(row=0, column=1, padx=4, pady=3, sticky="nsew")
+# LF2
+myLF2 = tk.LabelFrame(left_main_panel, text='Order Queue', padx=2, pady=1, labelanchor='n')
+myLF2.grid(row=0, column=1, padx=5, pady=3, sticky="nsew")
 
 for count, name in enumerate(LF2body):
-    fnt = FONT_HEADER if count == 0 else FONT_ROW
-    lbl = tk.Label(myLF2, text=name, padx=4, pady=2, font=fnt)
+    lbl = tk.Label(myLF2, text=name, padx=3, pady=1, font=("Arial", 9))
     lbl.grid(row=count, column=0)
     c3Label.append(lbl)
 
 for count, val in enumerate(LF2body_value):
-    fnt = FONT_HEADER if count == 0 else FONT_ROW
-    lbl = tk.Label(myLF2, text=val, padx=4, pady=2, font=fnt)
+    lbl = tk.Label(myLF2, text=val, padx=3, pady=1, font=("Arial", 9))
     lbl.grid(row=count, column=1)
     c4Label.append(lbl)
 
-# LF3: Serial: COM Slots (14개 라인, 폰트 11pt 확대)
-myLF3 = tk.LabelFrame(left_main_panel, text='Serial: COM Slots', padx=4, pady=2, font=("맑은 고딕", 10, "bold"), labelanchor='n')
-myLF3.grid(row=0, column=2, padx=4, pady=3, sticky="nsew")
+# LF3
+myLF3 = tk.LabelFrame(left_main_panel, text='Serial: COM Slots', padx=2, pady=1, labelanchor='n')
+myLF3.grid(row=0, column=2, padx=5, pady=3, sticky="nsew")
 
 for count, dev in enumerate(LF3cmos):
-    fnt = FONT_HEADER if count == 0 else FONT_ROW
-    lbl = tk.Label(myLF3, text=dev, padx=3, pady=2, font=fnt)
+    lbl = tk.Label(myLF3, text=dev, padx=2, pady=1, font=("Arial", 9))
     lbl.grid(row=count, column=0)
     c5Label.append(lbl)
 
 for count, stat in enumerate(LF3cmos_value):
-    fnt = FONT_HEADER if count == 0 else FONT_ROW
-    lbl = tk.Label(myLF3, text=stat, padx=3, pady=2, font=fnt)
+    lbl = tk.Label(myLF3, text=stat, padx=2, pady=1, font=("Arial", 9))
     lbl.grid(row=count, column=1)
     c6Label.append(lbl)
 
 for count, entry_name in enumerate(LF3cmos_entry):
     if count == 0:
-        btn = tk.Button(myLF3, text='전송', width=6, pady=0, font=("맑은 고딕", 9, "bold"), command=c7entrySender)
-        btn.grid(row=count, column=2, padx=2, pady=1)
+        btn = tk.Button(myLF3, text='전송', width=5, pady=0, font=("Arial", 8), command=c7entrySender)
+        btn.grid(row=count, column=2, padx=1, pady=0)
         c7Entry.append(btn)
     else:
-        ent = tk.Entry(myLF3, width=8, font=("맑은 고딕", 10))
-        ent.grid(row=count, column=2, padx=2, pady=1)
+        ent = tk.Entry(myLF3, width=7, font=("Arial", 9))
+        ent.grid(row=count, column=2, padx=1, pady=0)
         ent.bind('<Return>', lambda event, idx=count: (
             send_slot_command(idx, c7Entry[idx].get().strip()),
             c7Entry[idx].delete(0, tk.END)
         ))
         c7Entry.append(ent)
 
-# 1층 버튼: 메뉴 카운트 버튼 + 초기화 버튼 (폰트 11pt Bold 확대)
-mid_frame = tk.Frame(left_main_panel, pady=4)
-mid_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=4, pady=4)
+# 1층 메뉴 버튼
+mid_frame = tk.Frame(left_main_panel, pady=2)
+mid_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
 
 button_specs = [
     {"name": "닭고기", "color": "#d9ead3", "is_reset_btn": False},
@@ -617,7 +625,6 @@ for i, spec in enumerate(button_specs):
             mid_frame,
             text=f"{spec['name']} (0)",
             bg=spec["color"],
-            font=("맑은 고딕", 11, "bold"),
             height=2,
             command=lambda idx=i: add_menu_count(idx)
         )
@@ -627,15 +634,14 @@ for i, spec in enumerate(button_specs):
             mid_frame,
             text=spec["name"],
             bg=spec["color"],
-            font=("맑은 고딕", 11, "bold"),
             height=2,
             command=reset_menu_count
         )
-    btn.grid(row=0, column=i, padx=3, sticky="ew")
+    btn.grid(row=0, column=i, padx=2, sticky="ew")
 
-# 2층 버튼: 1~5테이블주문 (폰트 11pt Bold 확대)
-sub_btn_frame = tk.Frame(left_main_panel, pady=4)
-sub_btn_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=4, pady=4)
+# 2층 테이블 버튼
+sub_btn_frame = tk.Frame(left_main_panel, pady=2)
+sub_btn_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
 
 table_buttons.clear()
 for i in range(5):
@@ -644,24 +650,23 @@ for i in range(5):
         sub_btn_frame,
         text=f"{i+1}테이블주문 (0)\n0원",
         bg="#f0f0f0",
-        font=("맑은 고딕", 11, "bold"),
         height=2,
         command=lambda idx=i: handle_table_button(idx)
     )
-    btn.grid(row=0, column=i, padx=3, sticky="ew")
+    btn.grid(row=0, column=i, padx=2, sticky="ew")
     table_buttons.append(btn)
 
-# 하단 콘솔 모니터링 프레임 (폰트 확대)
-console_frame = tk.LabelFrame(left_main_panel, text='Console Monitoring', padx=6, pady=4, font=("맑은 고딕", 10, "bold"))
-console_frame.grid(row=4, column=0, columnspan=3, padx=4, pady=4, sticky="nsew")
+# 하단 콘솔 모니터링 프레임
+console_frame = tk.LabelFrame(left_main_panel, text='Console Monitoring', padx=5, pady=3)
+console_frame.grid(row=4, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
 
 font_family = "Courier" if sys.platform == "darwin" else "Consolas"
 console_text = tk.Text(
     console_frame,
-    height=8,
+    height=7,
     bg="#1e1e1e",
     fg="#d4d4d4",
-    font=(font_family, 10),
+    font=(font_family, 9),
     wrap="char",
     state="disabled"
 )
@@ -678,7 +683,7 @@ sys.stdout = ConsoleRedirector(console_text, orig_stdout, tag='out')
 sys.stderr = ConsoleRedirector(console_text, orig_stderr, tag='error')
 
 # ----------------------------------------------------
-# 7. 우측 대형 카메라 뷰어 영역 (3개 화면)
+# 7. 우측 대형 카메라 뷰어 영역
 # ----------------------------------------------------
 right_camera_panel.rowconfigure(0, weight=1)
 right_camera_panel.rowconfigure(1, weight=1)
@@ -688,10 +693,10 @@ right_camera_panel.columnconfigure(0, weight=1)
 cam_titles = ["Camera Feed 1 (메인 관측)", "Camera Feed 2 (보조 관측)", "Camera Feed 3 (분석/대기)"]
 
 for idx, title in enumerate(cam_titles):
-    cam_lf = tk.LabelFrame(right_camera_panel, text=title, padx=5, pady=5, font=("맑은 고딕", 10, "bold"))
+    cam_lf = tk.LabelFrame(right_camera_panel, text=title, padx=5, pady=5)
     cam_lf.grid(row=idx, column=0, sticky="nsew", padx=3, pady=3)
     
-    disp_lbl = tk.Label(cam_lf, text=f"CAM {idx+1}\n(No Signal)", bg="#111111", fg="#777777", font=("맑은 고딕", 12))
+    disp_lbl = tk.Label(cam_lf, text=f"CAM {idx+1}\n(No Signal)", bg="#111111", fg="#777777", font=("Arial", 12))
     disp_lbl.pack(fill="both", expand=True)
     cam_display_labels.append(disp_lbl)
 
