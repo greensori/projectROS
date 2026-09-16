@@ -77,8 +77,10 @@ MENU_PRICE = 6000
 menu_counter = [0, 0, 0, 0]
 menu_buttons = []
 
-table_orders = [{"count": 0, "amount": 0} for _ in range(5)]
+# 정산 전 주문 상세(메뉴별 누적 수량)를 보관할 items 딕셔너리 추가
+table_orders = [{"count": 0, "amount": 0, "items": {name: 0 for name in MENU_NAMES}} for _ in range(5)]
 table_buttons = []
+table_order_detail_labels = []  # 정산전 메뉴 및 숫자 표시 레이블 관리 리스트
 
 dummy_buttons = []
 
@@ -113,11 +115,12 @@ slot_current_job = {i: None for i in range(1, NUM_SLOTS + 1)}
 cam_display_labels = []
 cam_photo_images = [None, None, None]
 
+analysis_buttons = [[], [], []]
+
 is_running = True
 orig_stdout = sys.stdout
 orig_stderr = sys.stderr
 
-# 시스템 리소스 상태 보관 변수
 current_sys_metrics = {
     "cpu": 0.0,
     "ram_pct": 0.0,
@@ -145,16 +148,27 @@ class ConsoleRedirector:
         if not string or not is_running:
             return
 
-        try:
-            self.text_widget.configure(state='normal')
-            self.text_widget.insert(tk.END, string, self.tag)
-            
-            num_lines = int(self.text_widget.index('end-1c').split('.')[0])
-            if num_lines > self.max_lines:
-                self.text_widget.delete('1.0', f'{num_lines - self.max_lines}.0')
+        def _append():
+            if not is_running:
+                return
+            try:
+                if not self.text_widget.winfo_exists():
+                    return
+                self.text_widget.configure(state='normal')
+                self.text_widget.insert(tk.END, string, self.tag)
+                
+                num_lines = int(self.text_widget.index('end-1c').split('.')[0])
+                if num_lines > self.max_lines:
+                    self.text_widget.delete('1.0', f'{num_lines - self.max_lines}.0')
 
-            self.text_widget.see(tk.END)
-            self.text_widget.configure(state='disabled')
+                self.text_widget.see(tk.END)
+                self.text_widget.configure(state='disabled')
+            except Exception:
+                pass
+
+        try:
+            if is_running and self.text_widget.winfo_exists():
+                self.text_widget.after(0, _append)
         except Exception:
             pass
 
@@ -219,7 +233,8 @@ def notify_slot_ok_received(slot_id):
     if job and job["waiting_ok"]:
         job["waiting_ok"] = False
         job["idx"] += 1
-        App.after(10, lambda: _send_job_line(slot_id))
+        if is_running and App.winfo_exists():
+            App.after(10, lambda: _send_job_line(slot_id))
 
 # ----------------------------------------------------
 # 4. 시리얼 통신 핵심 함수
@@ -269,7 +284,7 @@ def serialDisconnectAll():
             except Exception:
                 pass
             portlist[i] = None
-        if i < len(c6Label):
+        if i < len(c6Label) and c6Label[i].winfo_exists():
             c6Label[i].configure(text="DC", foreground="black")
 
 def serialTester():
@@ -286,12 +301,16 @@ def serialTester():
                     chunk = ser.read(waiting).decode('utf-8', errors='ignore')
                     rx_buffers[i] += chunk
                     
+                    if len(rx_buffers[i]) > 10000:
+                        rx_buffers[i] = rx_buffers[i][-2000:]
+                    
                     while '\n' in rx_buffers[i]:
                         line, rx_buffers[i] = rx_buffers[i].split('\n', 1)
                         line = line.strip()
                         if line:
                             print(f"[RX Slot{i}] {line}")
-                            c6Label[i].configure(text=line[:12], foreground="blue")
+                            if c6Label[i].winfo_exists():
+                                c6Label[i].configure(text=line[:12], foreground="blue")
                             
                             clean_line = line.replace(" ", "").upper()
 
@@ -304,9 +323,10 @@ def serialTester():
                                 notify_slot_ok_received(i)
 
             except Exception:
-                c6Label[i].configure(text="Error", foreground="red")
+                if c6Label[i].winfo_exists():
+                    c6Label[i].configure(text="Error", foreground="red")
 
-    if is_running:
+    if is_running and App.winfo_exists():
         App.after(15, serialTester)
 
 def send_slot_command(slot_id, gcode):
@@ -336,8 +356,8 @@ def c7entrySender():
 # ----------------------------------------------------
 # 5. Order Queue & Pipeline
 # ----------------------------------------------------
-active_orders = []       
-overflow_orders = []     
+active_orders = []      
+overflow_orders = []    
 
 is_transferring = False  
 discharge_queue = deque() 
@@ -364,9 +384,9 @@ def sync_order_queue_ui():
             stat_text = "-"
             color = "black"
 
-        if i < len(c3Label):
+        if i < len(c3Label) and c3Label[i].winfo_exists():
             c3Label[i].configure(text=name_text)
-        if i < len(c4Label):
+        if i < len(c4Label) and c4Label[i].winfo_exists():
             c4Label[i].configure(text=stat_text, fg=color)
 
 def sync_connection_info_ui():
@@ -399,16 +419,16 @@ def sync_connection_info_ui():
             c2_text = "-"
             fg_color = "black"
 
-        if i < len(c0Label):
+        if i < len(c0Label) and c0Label[i].winfo_exists():
             c0Label[i].configure(text=c0_text)
-        if i < len(c1Label):
+        if i < len(c1Label) and c1Label[i].winfo_exists():
             c1Label[i].configure(text=c1_text)
-        if i < len(c2Label):
+        if i < len(c2Label) and c2Label[i].winfo_exists():
             c2Label[i].configure(text=c2_text, fg=fg_color)
 
 def sync_menu_counter_ui():
     for idx in range(4):
-        if idx < len(menu_buttons):
+        if idx < len(menu_buttons) and menu_buttons[idx].winfo_exists():
             menu_buttons[idx].configure(text=f"{MENU_NAMES[idx]} ({menu_counter[idx]})")
 
 def add_menu_count(idx):
@@ -423,9 +443,22 @@ def reset_menu_count():
     print("[초기화] 선택된 메뉴 수량이 0으로 초기화되었습니다.")
 
 def update_table_ui(t_idx):
-    count = table_orders[t_idx]["count"]
-    amt = table_orders[t_idx]["amount"]
-    table_buttons[t_idx].configure(text=f"{t_idx + 1}테이블주문 ({count})\n{amt:,}원")
+    if t_idx < len(table_buttons) and table_buttons[t_idx].winfo_exists():
+        count = table_orders[t_idx]["count"]
+        amt = table_orders[t_idx]["amount"]
+        table_buttons[t_idx].configure(text=f"{t_idx + 1}테이블주문 ({count})\n{amt:,}원")
+
+    # 정산 전 누적 주문된 메뉴 및 수량 표시 갱신
+    if t_idx < len(table_order_detail_labels) and table_order_detail_labels[t_idx].winfo_exists():
+        items_dict = table_orders[t_idx].get("items", {})
+        active_items = [f"{name} x {qty}" for name, qty in items_dict.items() if qty > 0]
+        if active_items:
+            detail_text = "\n".join(active_items)
+            fg_color = "#1e293b"
+        else:
+            detail_text = "-"
+            fg_color = "#94a3b8"
+        table_order_detail_labels[t_idx].configure(text=detail_text, fg=fg_color)
 
 def handle_table_button(t_idx):
     global menu_counter, table_orders
@@ -435,6 +468,12 @@ def handle_table_button(t_idx):
         added_amount = current_selected_sum * MENU_PRICE
         table_orders[t_idx]["count"] += current_selected_sum
         table_orders[t_idx]["amount"] += added_amount
+
+        # 선택된 메뉴 및 수량을 테이블 누적 내역에 반영
+        for m_idx, count in enumerate(menu_counter):
+            if count > 0:
+                table_orders[t_idx]["items"][MENU_NAMES[m_idx]] += count
+
         update_table_ui(t_idx)
 
         t_num = t_idx + 1
@@ -468,6 +507,7 @@ def handle_table_button(t_idx):
             print(f"[{t_idx + 1}테이블 정산 완료] {table_orders[t_idx]['count']}개 / {table_orders[t_idx]['amount']:,}원 초기화")
             table_orders[t_idx]["count"] = 0
             table_orders[t_idx]["amount"] = 0
+            table_orders[t_idx]["items"] = {name: 0 for name in MENU_NAMES}
             update_table_ui(t_idx)
         else:
             print(f"[{t_idx + 1}테이블] 정산할 주문 내역이 없습니다.")
@@ -535,7 +575,8 @@ def process_discharge_queue():
         return
 
     if is_transferring:
-        App.after(100, process_discharge_queue)
+        if is_running and App.winfo_exists():
+            App.after(100, process_discharge_queue)
         return
 
     is_discharging = True
@@ -562,14 +603,14 @@ def complete_order(item):
             process_discharge_queue()
             schedule_pipeline()
 
-    App.after(800, _remove)
+    if is_running and App.winfo_exists():
+        App.after(800, _remove)
 
 # ----------------------------------------------------
 # 6. 시스템 리소스 모니터링 스레드 및 UI 갱신
 # ----------------------------------------------------
 def background_system_monitor():
-    """백그라운드에서 주기적으로 CPU, RAM, GPU 정보를 수집하여 캐싱"""
-    psutil.cpu_percent(interval=None)  # 초기 워밍업
+    psutil.cpu_percent(interval=None)
     while is_running:
         try:
             cpu = psutil.cpu_percent(interval=0.5)
@@ -609,8 +650,7 @@ def background_system_monitor():
         time.sleep(0.5)
 
 def update_system_statusbar():
-    """메인 UI의 최하단 상태표시줄 레이블 텍스트 갱신"""
-    if not is_running:
+    if not is_running or not App.winfo_exists():
         return
 
     cpu = current_sys_metrics["cpu"]
@@ -627,8 +667,11 @@ def update_system_statusbar():
         f"[GPU VRAM] {vram_used}"
     )
 
-    sys_status_label.config(text=status_str)
-    App.after(1000, update_system_statusbar)
+    if sys_status_label.winfo_exists():
+        sys_status_label.config(text=status_str)
+    
+    if is_running and App.winfo_exists():
+        App.after(1000, update_system_statusbar)
 
 # ----------------------------------------------------
 # 7. GUI 레이아웃 구성
@@ -636,29 +679,33 @@ def update_system_statusbar():
 App = tk.Tk()
 App.title('Food Automation & Multi-Camera Vision Controller')
 App.resizable(width=True, height=True)
-App.geometry('1280x780+150+60')
+App.geometry('1600x820+80+30')
 
-# 상단 컨테이너 영역과 하단 상태바 영역 분리
 App.columnconfigure(0, weight=1)
-App.rowconfigure(0, weight=1)  # 메인 콘텐츠 영역
-App.rowconfigure(1, weight=0)  # 최하단 시스템 정보 상태바
+App.rowconfigure(0, weight=1)
+App.rowconfigure(1, weight=0)
 
 content_frame = tk.Frame(App)
 content_frame.grid(row=0, column=0, sticky="nsew")
-content_frame.columnconfigure(0, weight=6)
-content_frame.columnconfigure(1, weight=4)
+
+content_frame.columnconfigure(0, weight=5)
+content_frame.columnconfigure(1, weight=3)
+content_frame.columnconfigure(2, weight=3)
 content_frame.rowconfigure(0, weight=1)
 
 left_main_panel = tk.Frame(content_frame)
 left_main_panel.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
-right_camera_panel = tk.Frame(content_frame, width=480)
+right_camera_panel = tk.Frame(content_frame, width=380)
 right_camera_panel.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+
+analysis_panel = tk.Frame(content_frame, width=380)
+analysis_panel.grid(row=0, column=2, sticky="nsew", padx=5, pady=5)
 
 left_main_panel.columnconfigure(0, weight=1)
 left_main_panel.columnconfigure(1, weight=1)
 left_main_panel.columnconfigure(2, weight=1)
-left_main_panel.rowconfigure(4, weight=1)  # 콘솔 모니터링 확장
+left_main_panel.rowconfigure(5, weight=1)  # 콘솔 영역 row가 4에서 5로 변경
 
 topmenu = tk.Menu(App)
 filemenu = tk.Menu(topmenu, tearoff=0)
@@ -727,12 +774,12 @@ for count, entry_name in enumerate(LF3cmos_entry):
         ent = tk.Entry(myLF3, width=7, font=("Arial", 9))
         ent.grid(row=count, column=2, padx=1, pady=0)
         ent.bind('<Return>', lambda event, idx=count: (
-            send_slot_command(idx, c7Entry[idx].get().strip()),
-            c7Entry[idx].delete(0, tk.END)
+            send_slot_command(idx, event.widget.get().strip()),
+            event.widget.delete(0, tk.END)
         ))
         c7Entry.append(ent)
 
-# 1층 버튼: 메뉴 카운트 버튼 + 초기화 버튼 (row=1)
+# 1층 버튼: 메뉴 카운트 버튼
 mid_frame = tk.Frame(left_main_panel, pady=2)
 mid_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
@@ -766,7 +813,7 @@ for i, spec in enumerate(button_specs):
         )
     btn.grid(row=0, column=i, padx=2, sticky="ew")
 
-# 2층 버튼: 1~5테이블주문 (row=2)
+# 2층 버튼: 테이블 주문
 sub_btn_frame = tk.Frame(left_main_panel, pady=2)
 sub_btn_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
@@ -783,7 +830,7 @@ for i in range(5):
     btn.grid(row=0, column=i, padx=2, sticky="ew")
     table_buttons.append(btn)
 
-# 3층 버튼: 빈버튼 1~5 (row=3)
+# 3층 버튼: 빈 버튼 1~5
 extra_btn_frame = tk.Frame(left_main_panel, pady=2)
 extra_btn_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
@@ -799,9 +846,39 @@ for i in range(5):
     btn.grid(row=0, column=i, padx=2, sticky="ew")
     dummy_buttons.append(btn)
 
-# 하단 콘솔 모니터링 프레임 (row=4)
+# ----------------------------------------------------
+# [신규 추가] 3층 빈버튼 아래: 정산 전 테이블별 주문 완료 내역 표시 패널 (row=4)
+# ----------------------------------------------------
+table_order_detail_frame = tk.LabelFrame(left_main_panel, text='정산 전 테이블별 주문 상세 내역', padx=5, pady=3)
+table_order_detail_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
+
+table_order_detail_labels.clear()
+for i in range(5):
+    table_order_detail_frame.columnconfigure(i, weight=1)
+    
+    # 각 테이블별 상세 박스
+    t_box = tk.Frame(table_order_detail_frame, bg="#ffffff", relief="solid", bd=1, padx=3, pady=3)
+    t_box.grid(row=0, column=i, padx=2, sticky="nsew")
+    
+    t_title = tk.Label(t_box, text=f"{i+1}번 테이블", font=("Arial", 9, "bold"), bg="#e2e8f0", fg="#1e293b")
+    t_title.pack(fill="x", pady=(0, 2))
+    
+    # 주문된 메뉴와 숫자를 보여줄 레이블
+    d_lbl = tk.Label(
+        t_box,
+        text="-",
+        font=("Arial", 8),
+        bg="#ffffff",
+        fg="#94a3b8",
+        justify="center",
+        height=4
+    )
+    d_lbl.pack(fill="both", expand=True)
+    table_order_detail_labels.append(d_lbl)
+
+# 5층: 콘솔 모니터링 (row=5로 이동)
 console_frame = tk.LabelFrame(left_main_panel, text='Console Monitoring', padx=5, pady=3)
-console_frame.grid(row=4, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
+console_frame.grid(row=5, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
 
 font_family = "Courier" if sys.platform == "darwin" else "Consolas"
 console_text = tk.Text(
@@ -844,12 +921,50 @@ for idx, title in enumerate(cam_titles):
     cam_display_labels.append(disp_lbl)
 
 def update_camera_views():
-    if not is_running:
+    if not is_running or not App.winfo_exists():
         return
     App.after(100, update_camera_views)
 
 # ----------------------------------------------------
-# 9. 창 최하단 시스템 정보 상태바 (Status Bar)
+# 8-1. 우측 비전 분석 및 센서 상태 패널
+# ----------------------------------------------------
+analysis_panel.rowconfigure(0, weight=1)
+analysis_panel.rowconfigure(1, weight=1)
+analysis_panel.rowconfigure(2, weight=1)
+analysis_panel.columnconfigure(0, weight=1)
+
+analysis_titles = [
+    "Vision #1 위치/센서 분석",
+    "Vision #2 위치/센서 분석",
+    "Vision #3 위치/센서 분석"
+]
+
+for section_idx, title in enumerate(analysis_titles):
+    sec_lf = tk.LabelFrame(analysis_panel, text=title, padx=4, pady=4)
+    sec_lf.grid(row=section_idx, column=0, sticky="nsew", padx=3, pady=3)
+
+    for r in range(3):
+        sec_lf.rowconfigure(r, weight=1)
+    for c in range(3):
+        sec_lf.columnconfigure(c, weight=1)
+
+    for b_idx in range(9):
+        r = b_idx // 3
+        c = b_idx % 3
+        btn_text = f"S{section_idx+1}-P{b_idx+1}\n[대기]"
+        btn = tk.Button(
+            sec_lf,
+            text=btn_text,
+            font=("Arial", 8),
+            bg="#f1f5f9",
+            padx=2,
+            pady=2
+        )
+        btn.grid(row=r, column=c, padx=2, pady=2, sticky="nsew")
+        analysis_buttons[section_idx].append(btn)
+
+# ----------------------------------------------------
+# 9. 창 최하단 시스템 정보 상태바
 # ----------------------------------------------------
 status_bar_frame = tk.Frame(App, bg="#202020", relief="sunken", bd=1)
 status_bar_frame.grid(row=1, column=0, sticky="ew")
@@ -883,13 +998,16 @@ def on_closing():
     App.destroy()
 
 if __name__ == '__main__':
-    # 백그라운드 리소스 모니터링 데몬 스레드 시작
     monitor_thread = threading.Thread(target=background_system_monitor, daemon=True)
     monitor_thread.start()
 
     sync_menu_counter_ui()
     sync_order_queue_ui()
     sync_connection_info_ui()
+    
+    # 초기 테이블 상세 UI 동기화
+    for i in range(5):
+        update_table_ui(i)
     
     App.protocol("WM_DELETE_WINDOW", on_closing)
     App.after(100, serialTester)
