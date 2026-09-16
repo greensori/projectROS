@@ -77,10 +77,10 @@ MENU_PRICE = 6000
 menu_counter = [0, 0, 0, 0]
 menu_buttons = []
 
-# 정산 전 주문 상세(메뉴별 누적 수량)를 보관할 items 딕셔너리 추가
+# 테이블별 누적 주문 관리
 table_orders = [{"count": 0, "amount": 0, "items": {name: 0 for name in MENU_NAMES}} for _ in range(5)]
 table_buttons = []
-table_order_detail_labels = []  # 정산전 메뉴 및 숫자 표시 레이블 관리 리스트
+table_order_detail_labels = []
 
 dummy_buttons = []
 
@@ -292,42 +292,43 @@ def serialTester():
     if not is_running:
         return
 
-    for i in range(1, NUM_SLOTS + 1):
-        ser = portlist[i]
-        if ser is not None and ser.is_open:
-            try:
-                waiting = ser.in_waiting
-                if waiting > 0:
-                    chunk = ser.read(waiting).decode('utf-8', errors='ignore')
-                    rx_buffers[i] += chunk
-                    
-                    if len(rx_buffers[i]) > 10000:
-                        rx_buffers[i] = rx_buffers[i][-2000:]
-                    
-                    while '\n' in rx_buffers[i]:
-                        line, rx_buffers[i] = rx_buffers[i].split('\n', 1)
-                        line = line.strip()
-                        if line:
-                            print(f"[RX Slot{i}] {line}")
-                            if c6Label[i].winfo_exists():
-                                c6Label[i].configure(text=line[:12], foreground="blue")
-                            
-                            clean_line = line.replace(" ", "").upper()
+    try:
+        for i in range(1, NUM_SLOTS + 1):
+            ser = portlist[i]
+            if ser is not None and ser.is_open:
+                try:
+                    waiting = ser.in_waiting
+                    if waiting > 0:
+                        chunk = ser.read(waiting).decode('utf-8', errors='ignore')
+                        rx_buffers[i] += chunk
+                        
+                        if len(rx_buffers[i]) > 10000:
+                            rx_buffers[i] = rx_buffers[i][-2000:]
+                        
+                        while '\n' in rx_buffers[i]:
+                            line, rx_buffers[i] = rx_buffers[i].split('\n', 1)
+                            line = line.strip()
+                            if line:
+                                print(f"[RX Slot{i}] {line}")
+                                if c6Label[i].winfo_exists():
+                                    c6Label[i].configure(text=line[:12], foreground="blue")
+                                
+                                clean_line = line.replace(" ", "").upper()
 
-                            for b_id in [1, 2, 3]:
-                                if f"READY_{b_id}" in clean_line or f"READY!{b_id}" in clean_line:
-                                    board_slot_map[b_id] = i
-                                    print(f"[동기화 감지] STM32 보드 {b_id}번 -> Slot {i} 매핑 완료")
+                                for b_id in [1, 2, 3]:
+                                    if f"READY_{b_id}" in clean_line or f"READY!{b_id}" in clean_line:
+                                        board_slot_map[b_id] = i
+                                        print(f"[동기화 감지] STM32 보드 {b_id}번 -> Slot {i} 매핑 완료")
 
-                            if clean_line == "OK" or clean_line.endswith("OK"):
-                                notify_slot_ok_received(i)
+                                if clean_line == "OK" or clean_line.endswith("OK"):
+                                    notify_slot_ok_received(i)
 
-            except Exception:
-                if c6Label[i].winfo_exists():
-                    c6Label[i].configure(text="Error", foreground="red")
-
-    if is_running and App.winfo_exists():
-        App.after(15, serialTester)
+                except Exception:
+                    if c6Label[i].winfo_exists():
+                        c6Label[i].configure(text="Error", foreground="red")
+    finally:
+        if is_running and App.winfo_exists():
+            App.after(15, serialTester)
 
 def send_slot_command(slot_id, gcode):
     if 1 <= slot_id < len(portlist):
@@ -448,7 +449,6 @@ def update_table_ui(t_idx):
         amt = table_orders[t_idx]["amount"]
         table_buttons[t_idx].configure(text=f"{t_idx + 1}테이블주문 ({count})\n{amt:,}원")
 
-    # 정산 전 누적 주문된 메뉴 및 수량 표시 갱신
     if t_idx < len(table_order_detail_labels) and table_order_detail_labels[t_idx].winfo_exists():
         items_dict = table_orders[t_idx].get("items", {})
         active_items = [f"{name} x {qty}" for name, qty in items_dict.items() if qty > 0]
@@ -469,7 +469,6 @@ def handle_table_button(t_idx):
         table_orders[t_idx]["count"] += current_selected_sum
         table_orders[t_idx]["amount"] += added_amount
 
-        # 선택된 메뉴 및 수량을 테이블 누적 내역에 반영
         for m_idx, count in enumerate(menu_counter):
             if count > 0:
                 table_orders[t_idx]["items"][MENU_NAMES[m_idx]] += count
@@ -540,7 +539,7 @@ def schedule_pipeline():
             execute_gcode_sequence(
                 slot_id=target_slot,
                 gcodes=AXIS_GCODES,
-                on_done=lambda it=pending_item: start_cooking_phase(it)
+                on_done=lambda target=pending_item: start_cooking_phase(target)
             )
 
 def start_cooking_phase(item):
@@ -558,7 +557,7 @@ def start_cooking_phase(item):
     execute_gcode_sequence(
         slot_id=target_slot,
         gcodes=recipe,
-        on_done=lambda it=item: start_finishing_phase(it)
+        on_done=lambda target=item: start_finishing_phase(target)
     )
 
 def start_finishing_phase(item):
@@ -587,7 +586,7 @@ def process_discharge_queue():
     execute_gcode_sequence(
         slot_id=target_slot,
         gcodes=BOARD_SYNC_GCODES,
-        on_done=lambda it=target_item: complete_order(it)
+        on_done=lambda target=target_item: complete_order(target)
     )
 
 def complete_order(item):
@@ -679,7 +678,7 @@ def update_system_statusbar():
 App = tk.Tk()
 App.title('Food Automation & Multi-Camera Vision Controller')
 App.resizable(width=True, height=True)
-App.geometry('1600x820+80+30')
+App.geometry('1920x860+40+30')
 
 App.columnconfigure(0, weight=1)
 App.rowconfigure(0, weight=1)
@@ -688,24 +687,29 @@ App.rowconfigure(1, weight=0)
 content_frame = tk.Frame(App)
 content_frame.grid(row=0, column=0, sticky="nsew")
 
+# 4개 패널 컬럼 비율 설정: 메인패널(5) : 카메라(3) : 센서분석(3) : AI챗(3)
 content_frame.columnconfigure(0, weight=5)
 content_frame.columnconfigure(1, weight=3)
 content_frame.columnconfigure(2, weight=3)
+content_frame.columnconfigure(3, weight=3)
 content_frame.rowconfigure(0, weight=1)
 
 left_main_panel = tk.Frame(content_frame)
 left_main_panel.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
-right_camera_panel = tk.Frame(content_frame, width=380)
+right_camera_panel = tk.Frame(content_frame, width=320)
 right_camera_panel.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
 
-analysis_panel = tk.Frame(content_frame, width=380)
+analysis_panel = tk.Frame(content_frame, width=320)
 analysis_panel.grid(row=0, column=2, sticky="nsew", padx=5, pady=5)
+
+chat_panel = tk.Frame(content_frame, width=350)
+chat_panel.grid(row=0, column=3, sticky="nsew", padx=5, pady=5)
 
 left_main_panel.columnconfigure(0, weight=1)
 left_main_panel.columnconfigure(1, weight=1)
 left_main_panel.columnconfigure(2, weight=1)
-left_main_panel.rowconfigure(5, weight=1)  # 콘솔 영역 row가 4에서 5로 변경
+left_main_panel.rowconfigure(5, weight=1)
 
 topmenu = tk.Menu(App)
 filemenu = tk.Menu(topmenu, tearoff=0)
@@ -779,7 +783,7 @@ for count, entry_name in enumerate(LF3cmos_entry):
         ))
         c7Entry.append(ent)
 
-# 1층 버튼: 메뉴 카운트 버튼
+# 1층: 메뉴 수량 선택
 mid_frame = tk.Frame(left_main_panel, pady=2)
 mid_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
@@ -813,7 +817,7 @@ for i, spec in enumerate(button_specs):
         )
     btn.grid(row=0, column=i, padx=2, sticky="ew")
 
-# 2층 버튼: 테이블 주문
+# 2층: 테이블 주문 버튼
 sub_btn_frame = tk.Frame(left_main_panel, pady=2)
 sub_btn_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
@@ -830,7 +834,7 @@ for i in range(5):
     btn.grid(row=0, column=i, padx=2, sticky="ew")
     table_buttons.append(btn)
 
-# 3층 버튼: 빈 버튼 1~5
+# 3층: 보조 버튼 영역
 extra_btn_frame = tk.Frame(left_main_panel, pady=2)
 extra_btn_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
@@ -846,9 +850,7 @@ for i in range(5):
     btn.grid(row=0, column=i, padx=2, sticky="ew")
     dummy_buttons.append(btn)
 
-# ----------------------------------------------------
-# [신규 추가] 3층 빈버튼 아래: 정산 전 테이블별 주문 완료 내역 표시 패널 (row=4)
-# ----------------------------------------------------
+# 4층: 정산 전 테이블별 주문 상세 내역 표시 패널
 table_order_detail_frame = tk.LabelFrame(left_main_panel, text='정산 전 테이블별 주문 상세 내역', padx=5, pady=3)
 table_order_detail_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
 
@@ -856,14 +858,12 @@ table_order_detail_labels.clear()
 for i in range(5):
     table_order_detail_frame.columnconfigure(i, weight=1)
     
-    # 각 테이블별 상세 박스
     t_box = tk.Frame(table_order_detail_frame, bg="#ffffff", relief="solid", bd=1, padx=3, pady=3)
     t_box.grid(row=0, column=i, padx=2, sticky="nsew")
     
     t_title = tk.Label(t_box, text=f"{i+1}번 테이블", font=("Arial", 9, "bold"), bg="#e2e8f0", fg="#1e293b")
     t_title.pack(fill="x", pady=(0, 2))
     
-    # 주문된 메뉴와 숫자를 보여줄 레이블
     d_lbl = tk.Label(
         t_box,
         text="-",
@@ -876,7 +876,7 @@ for i in range(5):
     d_lbl.pack(fill="both", expand=True)
     table_order_detail_labels.append(d_lbl)
 
-# 5층: 콘솔 모니터링 (row=5로 이동)
+# 5층: 콘솔 모니터링
 console_frame = tk.LabelFrame(left_main_panel, text='Console Monitoring', padx=5, pady=3)
 console_frame.grid(row=5, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
 
@@ -926,7 +926,7 @@ def update_camera_views():
     App.after(100, update_camera_views)
 
 # ----------------------------------------------------
-# 8-1. 우측 비전 분석 및 센서 상태 패널
+# 8-1. 우측 비전 분석 패널
 # ----------------------------------------------------
 analysis_panel.rowconfigure(0, weight=1)
 analysis_panel.rowconfigure(1, weight=1)
@@ -962,6 +962,100 @@ for section_idx, title in enumerate(analysis_titles):
         )
         btn.grid(row=r, column=c, padx=2, pady=2, sticky="nsew")
         analysis_buttons[section_idx].append(btn)
+
+# ----------------------------------------------------
+# 8-2. [신규 추가] 제일 우측: AI LLM Chat Assistant (Ollama 연동 대비 패널)
+# ----------------------------------------------------
+chat_panel.rowconfigure(0, weight=1)
+chat_panel.columnconfigure(0, weight=1)
+
+chat_lf = tk.LabelFrame(chat_panel, text='Ollama AI Assistant (Chat)', padx=5, pady=5)
+chat_lf.grid(row=0, column=0, sticky="nsew")
+chat_lf.rowconfigure(0, weight=1)
+chat_lf.rowconfigure(1, weight=0)
+chat_lf.columnconfigure(0, weight=1)
+
+# 채팅 히스토리 텍스트 위젯
+chat_history = tk.Text(
+    chat_lf,
+    bg="#0f172a",
+    fg="#f8fafc",
+    font=("Arial", 9),
+    wrap="word",
+    state="disabled"
+)
+chat_history.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
+
+chat_history.tag_config('user', foreground='#38bdf8', font=("Arial", 9, "bold"))
+chat_history.tag_config('bot', foreground='#4ade80')
+chat_history.tag_config('sys', foreground='#94a3b8', font=("Arial", 8, "italic"))
+
+chat_scroll = ttk.Scrollbar(chat_lf, orient="vertical", command=chat_history.yview)
+chat_scroll.grid(row=0, column=1, sticky="ns", pady=(0, 5))
+chat_history.configure(yscrollcommand=chat_scroll.set)
+
+# 초기 안내 문구 출력
+chat_history.configure(state='normal')
+chat_history.insert(tk.END, "[시스템] Ollama 테스트 채팅 인터페이스 준비 완료.\n", "sys")
+chat_history.configure(state='disabled')
+
+# 입력 영역 프레임
+chat_input_frame = tk.Frame(chat_lf)
+chat_input_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
+chat_input_frame.columnconfigure(0, weight=1)
+
+chat_entry = tk.Entry(chat_input_frame, font=("Arial", 10))
+chat_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4), ipady=3)
+
+def append_chat_message(sender_tag, message):
+    if not is_running or not App.winfo_exists():
+        return
+    chat_history.configure(state='normal')
+    if sender_tag == 'user':
+        chat_history.insert(tk.END, f"\n[User]: {message}\n", "user")
+    elif sender_tag == 'bot':
+        chat_history.insert(tk.END, f"[Ollama]: {message}\n", "bot")
+    elif sender_tag == 'sys':
+        chat_history.insert(tk.END, f"[System]: {message}\n", "sys")
+    chat_history.see(tk.END)
+    chat_history.configure(state='disabled')
+
+def send_chat_message():
+    user_text = chat_entry.get().strip()
+    if not user_text:
+        return
+    chat_entry.delete(0, tk.END)
+    append_chat_message('user', user_text)
+
+    # 비동기 스레드 처리: 메인 루프(Tkinter 및 시리얼 통신) 프리징 방지
+    def _async_ollama_mock():
+        time.sleep(0.4)  # 네트워크/연산 지연 시뮬레이션
+        
+        # 나중에 Ollama 연동 시 requests 또는 ollama 패키지 호출 코드로 교체
+        # 예: res = requests.post("http://localhost:11434/api/generate", json={"model": "llama3", "prompt": user_text})
+        mock_reply = f"(테스트 응답) '{user_text}' 입력을 수신했습니다. Ollama 연동 시 답변이 생성됩니다."
+        
+        if is_running and App.winfo_exists():
+            App.after(0, lambda: append_chat_message('bot', mock_reply))
+
+    threading.Thread(target=_async_ollama_mock, daemon=True).start()
+
+chat_entry.bind('<Return>', lambda e: send_chat_message())
+
+chat_btn_box = tk.Frame(chat_input_frame)
+chat_btn_box.grid(row=0, column=1)
+
+chat_send_btn = tk.Button(chat_btn_box, text="전송", bg="#3b82f6", fg="white", font=("Arial", 9, "bold"), command=send_chat_message)
+chat_send_btn.pack(side="left", padx=1)
+
+def clear_chat_history():
+    chat_history.configure(state='normal')
+    chat_history.delete('1.0', tk.END)
+    chat_history.insert(tk.END, "[시스템] 대화 내용이 초기화되었습니다.\n", "sys")
+    chat_history.configure(state='disabled')
+
+chat_clear_btn = tk.Button(chat_btn_box, text="비우기", bg="#e2e8f0", font=("Arial", 8), command=clear_chat_history)
+chat_clear_btn.pack(side="left", padx=1)
 
 # ----------------------------------------------------
 # 9. 창 최하단 시스템 정보 상태바
@@ -1005,7 +1099,6 @@ if __name__ == '__main__':
     sync_order_queue_ui()
     sync_connection_info_ui()
     
-    # 초기 테이블 상세 UI 동기화
     for i in range(5):
         update_table_ui(i)
     
