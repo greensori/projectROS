@@ -41,3 +41,7 @@
 │       └- can.c            # CAN 통신 패킷 처리
 └── 5단계 goto finish
     └── pin_config.h        # 핀 맵 및 파라미터 상수 정의
+
+
+
+    
