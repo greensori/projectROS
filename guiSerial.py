@@ -20,6 +20,93 @@ try:
     HAS_NVML = True
 except Exception:
     HAS_NVML = False
+    
+'''
+### 입력 unit 1 관련 설명
+
+[시스템 핀 맵 및 제어 명세 - 수정 완료본]
+디버그 고정: PA13(SWDIO), PA14(SWCLK), PB3(SWO), PB4(NJTRST), PC14/PC15(사용지양)
+보드 기본: PA5(LED), PC13(스위치 B1)
+
+[TIM2 메인 3축 선형 보간]
+STEP: X(PA0), Y(PA1), Z(PB10)
+DIR : X(PC0), Y(PC1), Z(PA8)   <-- PC2에서 PA8로 변경
+LIMIT/PROBE:
+ - Z_PROBE: PD2 (근접 센서)
+ - Z_LIMIT: PB13 (Active-Low)
+ - X_LIMIT: PB14 (Active-Low)
+ - Y_LIMIT: PB15 (Active-Low)
+
+[TIM3 4개 채널 독립 구동]
+STEP: CH1(PA6), CH2(PA7), CH3(PB0), CH4(PB1)
+DIR : CH1(PB5), CH2(PB6), CH3(PB7), CH4(PB8)
+LIMIT:
+ - CH1: PA9
+ - CH2: PA10
+ - CH3: PA11
+ - CH4: PA12
+[공압 유닛 (8채널 출력)]
+P0: PA4  (로드리스 전진)
+P1: PC2  (로드리스 후진)       <-- PA8에서 PC2로 변경
+P2: PB2  (TIM3 테이블 그리퍼 1)
+P3: PC3  (TIM3 테이블 그리퍼 2)
+P4: PC9  (Z축 엔드 그리퍼 1)
+P5: PC10 (Z축 엔드 그리퍼 2)
+P6: PC11 (TIM3 테이블 리프트 1)
+P7: PC12 (TIM3 테이블 리프트 2)
+[기타 입력 센서]
+PC4: UPPER_SENS_1 (이송 상단 센서 1)
+PC5: UPPER_SENS_2 (이송 상단 센서 2)
+PC6: REF_SENS_1   (광축 기준 센서 1)
+PC7: REF_SENS_2   (광축 기준 센서 2)
+PC8: TABLE_LIMIT  (조리 테이블 감지 센서 / 물건 감지 트리거)
+
+
+
+### 입력 unit 2 관련 설명
+
+[시스템 핀 맵 및 제어 명세 - 수정 완료본]
+디버그 고정: PA13(SWDIO), PA14(SWCLK), PB3(SWO), PB4(NJTRST), PC14/PC15(사용지양)
+보드 기본: PA5(LED), PC13(스위치 B1)
+
+[TIM2 메인 3축 선형 보간]
+STEP: X(PA0), Y(PA1), Z(PB10)
+DIR : X(PC0), Y(PC1), Z(PA8)
+LIMIT/PROBE:
+ - Z_PROBE: PD2 (근접 센서)
+ - Z_LIMIT: PB13 (Active-Low)
+ - X_LIMIT: PB14 (Active-Low)
+ - Y_LIMIT: PB15 (Active-Low)
+
+[TIM3 4개 채널 독립 구동]
+STEP: CH1(PA6), CH2(PA7), CH3(PB0), CH4(PB1)
+DIR : CH1(PB5), CH2(PB6), CH3(PB7), CH4(PB8)
+LIMIT:
+ - CH1: PA9
+ - CH2: PA10
+ - CH3: PA11
+ - CH4: PA12
+[공압 유닛 (8채널 출력)]
+P0: PA4  (점화유닛 1)
+P1: PC2  (점화유닛 2)
+P2: PB2  (cooker1_pneu_1)
+P3: PC3  (cooker2_pneu_1)
+P4: PC9  (미지정)
+P5: PC10 (미지정)
+P6: PC11 (미지정)
+P7: PC12 (미지정)
+[기타 입력 센서]
+PC4: cooker_1_SENS_1 (조리유닛1 보조센서 1)
+PC5: cooker_2_SENS_1 (조리유닛2 보조센서 1)
+PC6: REF_SENS_1   (광축 기준 센서 1)
+PC7: REF_SENS_2   (광축 기준 센서 2)
+PC8: TABLE_LIMIT  (조리 테이블 감지 센서 / 물건 감지 트리거)
+
+
+
+
+
+'''
 
 # ----------------------------------------------------
 # 1. 3단계 G-code 시퀀스 정의
@@ -111,6 +198,9 @@ board_slot_map = {}
 
 slot_queues = {i: deque() for i in range(1, NUM_SLOTS + 1)}
 slot_current_job = {i: None for i in range(1, NUM_SLOTS + 1)}
+
+# 신규: 카메라 좌측 더미 버튼 참조 리스트
+slot_dummy_buttons = []
 
 cam_display_labels = []
 cam_photo_images = [None, None, None]
@@ -687,24 +777,43 @@ App.rowconfigure(1, weight=0)
 content_frame = tk.Frame(App)
 content_frame.grid(row=0, column=0, sticky="nsew")
 
-# 4개 패널 컬럼 비율 설정: 메인패널(5) : 카메라(3) : 센서분석(3) : AI챗(3)
+# 5개 패널 컬럼 비율 설정: 메인(5) : 세로버튼열(고정) : 카메라(3) : 센서분석(3) : AI챗(3)
 content_frame.columnconfigure(0, weight=5)
-content_frame.columnconfigure(1, weight=3)
+content_frame.columnconfigure(1, weight=0)
 content_frame.columnconfigure(2, weight=3)
 content_frame.columnconfigure(3, weight=3)
+content_frame.columnconfigure(4, weight=3)
 content_frame.rowconfigure(0, weight=1)
 
 left_main_panel = tk.Frame(content_frame)
 left_main_panel.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
+# --- [신규 추가] 카메라 피드 왼쪽 기능 없는 세로 정렬 버튼 14개 패널 ---
+slot_btn_panel = tk.LabelFrame(content_frame, text="슬롯", padx=3, pady=3)
+slot_btn_panel.grid(row=0, column=1, sticky="nsew", padx=(0, 5), pady=5)
+
+slot_dummy_buttons.clear()
+for i in range(14):
+    slot_btn_panel.rowconfigure(i, weight=1)
+    btn = tk.Button(
+        slot_btn_panel,
+        text=f"Slot {i+1}",
+        font=("Arial", 8),
+        bg="#f8fafc",
+        relief="groove"
+    )
+    btn.grid(row=i, column=0, sticky="nsew", padx=1, pady=1)
+    slot_dummy_buttons.append(btn)
+# ----------------------------------------------------------------------
+
 right_camera_panel = tk.Frame(content_frame, width=320)
-right_camera_panel.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+right_camera_panel.grid(row=0, column=2, sticky="nsew", padx=5, pady=5)
 
 analysis_panel = tk.Frame(content_frame, width=320)
-analysis_panel.grid(row=0, column=2, sticky="nsew", padx=5, pady=5)
+analysis_panel.grid(row=0, column=3, sticky="nsew", padx=5, pady=5)
 
 chat_panel = tk.Frame(content_frame, width=350)
-chat_panel.grid(row=0, column=3, sticky="nsew", padx=5, pady=5)
+chat_panel.grid(row=0, column=4, sticky="nsew", padx=5, pady=5)
 
 left_main_panel.columnconfigure(0, weight=1)
 left_main_panel.columnconfigure(1, weight=1)
@@ -964,7 +1073,7 @@ for section_idx, title in enumerate(analysis_titles):
         analysis_buttons[section_idx].append(btn)
 
 # ----------------------------------------------------
-# 8-2. [신규 추가] 제일 우측: AI LLM Chat Assistant (Ollama 연동 대비 패널)
+# 8-2. 제일 우측: AI LLM Chat Assistant (Ollama 연동 대비 패널)
 # ----------------------------------------------------
 chat_panel.rowconfigure(0, weight=1)
 chat_panel.columnconfigure(0, weight=1)
@@ -975,7 +1084,6 @@ chat_lf.rowconfigure(0, weight=1)
 chat_lf.rowconfigure(1, weight=0)
 chat_lf.columnconfigure(0, weight=1)
 
-# 채팅 히스토리 텍스트 위젯
 chat_history = tk.Text(
     chat_lf,
     bg="#0f172a",
@@ -994,12 +1102,10 @@ chat_scroll = ttk.Scrollbar(chat_lf, orient="vertical", command=chat_history.yvi
 chat_scroll.grid(row=0, column=1, sticky="ns", pady=(0, 5))
 chat_history.configure(yscrollcommand=chat_scroll.set)
 
-# 초기 안내 문구 출력
 chat_history.configure(state='normal')
 chat_history.insert(tk.END, "[시스템] Ollama 테스트 채팅 인터페이스 준비 완료.\n", "sys")
 chat_history.configure(state='disabled')
 
-# 입력 영역 프레임
 chat_input_frame = tk.Frame(chat_lf)
 chat_input_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
 chat_input_frame.columnconfigure(0, weight=1)
@@ -1027,12 +1133,8 @@ def send_chat_message():
     chat_entry.delete(0, tk.END)
     append_chat_message('user', user_text)
 
-    # 비동기 스레드 처리: 메인 루프(Tkinter 및 시리얼 통신) 프리징 방지
     def _async_ollama_mock():
-        time.sleep(0.4)  # 네트워크/연산 지연 시뮬레이션
-        
-        # 나중에 Ollama 연동 시 requests 또는 ollama 패키지 호출 코드로 교체
-        # 예: res = requests.post("http://localhost:11434/api/generate", json={"model": "llama3", "prompt": user_text})
+        time.sleep(0.4)
         mock_reply = f"(테스트 응답) '{user_text}' 입력을 수신했습니다. Ollama 연동 시 답변이 생성됩니다."
         
         if is_running and App.winfo_exists():
