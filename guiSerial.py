@@ -9,7 +9,6 @@ from tkinter import ttk
 from collections import deque
 import serial
 import serial.tools.list_ports
-
 import psutil
 
 try:
@@ -33,6 +32,8 @@ TOTAL_MAX_COOK_TIME = 60        # 1번 타이머 상한: 총 1분 (60초)
 PHASE_MAX_TIME = 30             # 2, 3번 타이머 상한: 앞면/뒷면 각 최대 30초
 UNIT_STAY_MAX_TIME = 10         # 4번 타이머 상한: 위상 연속 체류 최대 10초 (10초 시 반전)
 BOTH_FLIPPED_WAIT_TIME = 10     # 양쪽 뒷면 시 앞면 복귀 임계치: 10초
+
+NUM_SLOTS = 14
 
 # ----------------------------------------------------
 # 1. 5단계 시퀀스 G-code 생성 함수
@@ -115,26 +116,25 @@ def get_stage5_finish_gcode(slot_id):
     ]
 
 # ----------------------------------------------------
-# 2. 전역 상태 및 슬롯별 정밀 타이머 관리
+# 2. 전역 상태 및 슬롯별 관리
 # ----------------------------------------------------
-NUM_SLOTS = 14
-
 heat_units = {
     i: {
         "status": "idle",           # 'idle', 'reserved', 'cooking', 'finished'
         "plate_id": 1 if i <= 7 else 2,
         "current_side": "front",    # 'front' or 'back'
         "order": None,
-        "total_time": 0.0,          # 1번 타이머 (누적 총 조리시간)
-        "front_time": 0.0,          # 2번 타이머 (앞면 누적 조리시간, 최대 30초)
-        "back_time": 0.0,           # 3번 타이머 (뒷면 누적 조리시간, 최대 30초)
-        "unit_stay_time": 0.0,      # 4번 타이머 (현재 위상 연속 체류 시간, 최대 10초)
+        "total_time": 0.0,
+        "front_time": 0.0,
+        "back_time": 0.0,
+        "unit_stay_time": 0.0,
         "last_tick": 0.0
     }
     for i in range(1, NUM_SLOTS + 1)
 }
 
 plate_flipping_lock = {1: False, 2: False}
+plate_flip_pending = {1: False, 2: False}
 
 sensor_states = {
     "stm1_pc6": "no trigger",
@@ -196,14 +196,16 @@ current_sys_metrics = {
 }
 
 # ----------------------------------------------------
-# 3. 콘솔 출력 리다이렉터
+# 3. 콘솔 리다이렉터 (큐 버퍼링 방식 개선)
 # ----------------------------------------------------
 class ConsoleRedirector:
-    def __init__(self, text_widget, original_stream, tag='out', max_lines=60):
+    def __init__(self, text_widget, original_stream, tag='out', max_lines=80):
         self.text_widget = text_widget
         self.original_stream = original_stream
         self.tag = tag
         self.max_lines = max_lines
+        self.buffer = deque()
+        self.scheduled = False
 
     def write(self, string):
         if self.original_stream:
@@ -213,27 +215,32 @@ class ConsoleRedirector:
         if not string or not is_running:
             return
 
-        def _append():
-            if not is_running:
-                return
+        self.buffer.append(string)
+        if not self.scheduled:
+            self.scheduled = True
             try:
-                if not self.text_widget.winfo_exists():
-                    return
-                self.text_widget.configure(state='normal')
-                self.text_widget.insert(tk.END, string, self.tag)
-                
-                num_lines = int(self.text_widget.index('end-1c').split('.')[0])
-                if num_lines > self.max_lines:
-                    self.text_widget.delete('1.0', f'{num_lines - self.max_lines}.0')
-
-                self.text_widget.see(tk.END)
-                self.text_widget.configure(state='disabled')
+                if is_running and self.text_widget.winfo_exists():
+                    self.text_widget.after(30, self._flush_to_widget)
             except Exception:
                 pass
 
+    def _flush_to_widget(self):
+        self.scheduled = False
+        if not is_running or not self.text_widget.winfo_exists():
+            return
+        
+        chunk = ""
+        while self.buffer:
+            chunk += self.buffer.popleft()
+
         try:
-            if is_running and self.text_widget.winfo_exists():
-                self.text_widget.after(0, _append)
+            self.text_widget.configure(state='normal')
+            self.text_widget.insert(tk.END, chunk, self.tag)
+            num_lines = int(self.text_widget.index('end-1c').split('.')[0])
+            if num_lines > self.max_lines:
+                self.text_widget.delete('1.0', f'{num_lines - self.max_lines}.0')
+            self.text_widget.see(tk.END)
+            self.text_widget.configure(state='disabled')
         except Exception:
             pass
 
@@ -286,10 +293,13 @@ def _send_job_line(slot_id):
     if job["idx"] < len(job["lines"]):
         cmd = job["lines"][job["idx"]]
         
+        # G4 딜레이 명령 지원
         if cmd.startswith("G4 P"):
             try:
                 delay_ms = int(cmd.split("P")[1].strip())
                 job["waiting_ok"] = True
+                if not SIMULATION_MODE:
+                    send_slot_command(slot_id, cmd)
                 App.after(delay_ms, lambda: notify_slot_ok_received(slot_id))
                 return
             except Exception:
@@ -506,10 +516,10 @@ def sync_heat_units_ui():
             
             if info["current_side"] == "front":
                 side_str = "앞면"
-                bg_color = "#16a34a"  # 앞면: 녹색
+                bg_color = "#16a34a"
             else:
                 side_str = "뒷면"
-                bg_color = "#2563eb"  # 뒷면: 파란색
+                bg_color = "#2563eb"
 
             display_text = (
                 f"조리대 {h_id} (HP{hp_no}-{side_str})\n"
@@ -622,7 +632,6 @@ def _start_stage1_pick(item, target_slot):
     print(f"\n▶ [1단계 시작: Pick and place] T{item['table']} {item['name']} -> 슬롯 {target_slot}")
     
     gcode_list = get_stage1_pick_gcode(item["name"])
-    
     x_map = {"닭고기": 2000, "목살": 2500, "삼겹살": 3000, "양념": 3500}
     b1_x = x_map.get(item["name"], 2000)
 
@@ -710,7 +719,7 @@ def _run_stage3_cook_and_place(item):
     execute_gcode_sequence(unit2_slot, gcode_place, on_done=_on_placed)
 
 # ----------------------------------------------------
-# 7. 4단계 및 5단계 타이머 모니터링 엔진 (0.5s 루프)
+# 7. 타이머 모니터링 엔진 (0.5s 루프)
 # ----------------------------------------------------
 def process_cooking_timer_tick():
     if not is_running or not App.winfo_exists():
@@ -735,19 +744,17 @@ def process_cooking_timer_tick():
 
     # 2) 4단계 위상변화 조건 검사
     for plate_id, slot_range in plate_groups.items():
-        if plate_flipping_lock[plate_id]:
+        if plate_flipping_lock[plate_id] or plate_flip_pending[plate_id]:
             continue
 
         should_flip = False
         for s in slot_range:
             info = heat_units[s]
             if info["status"] == "cooking":
-                # 4번 타이머: 연속 체류 10초 초과 시 반전
                 if info["unit_stay_time"] >= UNIT_STAY_MAX_TIME:
                     should_flip = True
                     print(f"[위상변화 감지] 슬롯 {s} 체류 시간 {UNIT_STAY_MAX_TIME}초 도달 ({info['unit_stay_time']:.1f}s)")
                     break
-                # 2/3번 타이머: 해당 면 조리 누적 30초 초과 시 반전
                 active_side_time = info["front_time"] if info["current_side"] == "front" else info["back_time"]
                 if active_side_time >= PHASE_MAX_TIME:
                     should_flip = True
@@ -765,7 +772,7 @@ def process_cooking_timer_tick():
                 info["status"] = "finished"
                 if info["order"]:
                     info["order"]["status"] = "5단계:완성배출"
-                print(f"[조리 완료] 슬롯 {h_id} 총 조리시간 {TOTAL_MAX_COOK_TIME}초(1분) 도달 배출 트리거")
+                print(f"[조리 완료] 슬롯 {h_id} 총 조리시간 {TOTAL_MAX_COOK_TIME}초 도달 배출 트리거")
                 _run_stage5_finish(h_id)
                 break
 
@@ -776,9 +783,12 @@ def process_cooking_timer_tick():
 def rotate_plate_flip(plate_id, callback=None):
     global is_unit2_busy
     if is_unit2_busy or plate_flipping_lock[plate_id]:
-        App.after(300, lambda: rotate_plate_flip(plate_id, callback))
+        if not plate_flip_pending[plate_id]:
+            plate_flip_pending[plate_id] = True
+            App.after(300, lambda: _retry_rotate_plate_flip(plate_id, callback))
         return
 
+    plate_flip_pending[plate_id] = False
     plate_flipping_lock[plate_id] = True
     is_unit2_busy = True
     unit2_slot = board_slot_map.get(2, 2)
@@ -799,7 +809,7 @@ def rotate_plate_flip(plate_id, callback=None):
                 info["unit_stay_time"] = 0.0
                 info["last_tick"] = time.time()
 
-        print(f"▶ [위상변화 완료] Heatplate {plate_id} 위상 전환 완료 (앞:녹색 / 뒤:파란색 동기화)")
+        print(f"▶ [위상변화 완료] Heatplate {plate_id} 위상 전환 완료")
         sync_order_queue_ui()
         sync_heat_units_ui()
         if callback:
@@ -807,6 +817,10 @@ def rotate_plate_flip(plate_id, callback=None):
         schedule_pipeline()
 
     execute_gcode_sequence(unit2_slot, flip_gcodes, on_done=_done_flip)
+
+def _retry_rotate_plate_flip(plate_id, callback):
+    plate_flip_pending[plate_id] = False
+    rotate_plate_flip(plate_id, callback)
 
 def _run_stage5_finish(slot_id):
     global is_unit2_busy
@@ -1051,7 +1065,6 @@ content_frame.rowconfigure(0, weight=1)
 left_main_panel = tk.Frame(content_frame)
 left_main_panel.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
-# 가상 조리대 14개 패널
 slot_btn_panel = tk.LabelFrame(content_frame, text="가상 조리대 (1~14)", padx=4, pady=4)
 slot_btn_panel.grid(row=0, column=1, sticky="nsew", padx=(0, 5), pady=5)
 
@@ -1250,7 +1263,7 @@ for i in range(5):
     d_lbl.pack(fill="both", expand=True)
     table_order_detail_labels.append(d_lbl)
 
-# 콘솔 창
+# 콘솔 모니터링
 console_frame = tk.LabelFrame(left_main_panel, text='Console Monitoring', padx=5, pady=3)
 console_frame.grid(row=5, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
 
