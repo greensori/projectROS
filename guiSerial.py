@@ -147,7 +147,7 @@ table_orders = [{"count": 0, "amount": 0, "items": {name: 0 for name in MENU_NAM
 table_buttons = []
 table_order_detail_labels = []
 
-dummy_buttons = []
+cancel_table_buttons = []
 
 portName = ['주문대기'] + ['-'] * NUM_SLOTS
 initStat = ['세트대기'] + ['-'] * NUM_SLOTS
@@ -195,8 +195,17 @@ current_sys_metrics = {
     "ram_total_gb": 0.0, "gpu_load": "N/A", "vram_used": "N/A"
 }
 
+def has_finished_discharging_unit():
+    """조리 완료되어 배출 대기 중이거나 배출 트리거 대상인 슬롯 확인"""
+    for info in heat_units.values():
+        if info["status"] == "finished":
+            return True
+        if info["status"] == "cooking" and info["total_time"] >= TOTAL_MAX_COOK_TIME:
+            return True
+    return False
+
 # ----------------------------------------------------
-# 3. 콘솔 리다이렉터 (큐 버퍼링 방식 개선)
+# 3. 콘솔 리다이렉터 (큐 버퍼링 방식)
 # ----------------------------------------------------
 class ConsoleRedirector:
     def __init__(self, text_widget, original_stream, tag='out', max_lines=80):
@@ -293,7 +302,6 @@ def _send_job_line(slot_id):
     if job["idx"] < len(job["lines"]):
         cmd = job["lines"][job["idx"]]
         
-        # G4 딜레이 명령 지원
         if cmd.startswith("G4 P"):
             try:
                 delay_ms = int(cmd.split("P")[1].strip())
@@ -648,8 +656,9 @@ def _check_and_start_stage2(item, b1_x):
         
         pd2_ok = (sensor_states["stm2_pd2"] == "no trigger") or SIMULATION_MODE
         pc6_ok = (sensor_states["stm1_pc6"] == "no trigger") or SIMULATION_MODE
+        has_finished = has_finished_discharging_unit()
 
-        if pd2_ok and pc6_ok and not is_unit2_busy:
+        if pd2_ok and pc6_ok and not is_unit2_busy and not has_finished:
             _run_stage2_unit_change(item, b1_x)
         else:
             App.after(100, _wait_sensor)
@@ -854,8 +863,56 @@ def _run_stage5_finish(slot_id):
     execute_gcode_sequence(unit2_slot, finish_gcodes, on_done=_done_finish)
 
 # ----------------------------------------------------
-# 8. 주문 관리 및 UI 연동
+# 8. 주문 관리 및 테이블별 취소 기능
 # ----------------------------------------------------
+def cancel_pending_orders_by_table(table_num):
+    """지정된 테이블(1~5)에서 아직 조리 착수하지 않은 '대기' 상태의 주문만 선별 취소"""
+    global active_orders, overflow_orders, table_orders
+
+    t_idx = table_num - 1
+    canceled_orders = []
+
+    # 1) active_orders 내 해당 테이블의 대기 항목만 분리
+    new_active = []
+    for item in active_orders:
+        if item.get("table") == table_num and item.get("status") == "대기":
+            canceled_orders.append(item)
+        else:
+            new_active.append(item)
+    active_orders = new_active
+
+    # 2) overflow_orders 내 해당 테이블 항목만 분리 (오버플로우는 전부 대기 상태)
+    new_overflow = []
+    for item in overflow_orders:
+        if item.get("table") == table_num:
+            canceled_orders.append(item)
+        else:
+            new_overflow.append(item)
+    overflow_orders = new_overflow
+
+    if not canceled_orders:
+        print(f"[{table_num}번 테이블] 취소 가능한 대기 상태의 주문이 없습니다. (조리 진행 중이거나 주문 없음)")
+        return
+
+    # 3) 해당 테이블 정산 정보 및 품목별 수량 차감
+    for item in canceled_orders:
+        m_name = item["name"]
+        if 0 <= t_idx < len(table_orders):
+            if table_orders[t_idx]["count"] > 0:
+                table_orders[t_idx]["count"] -= 1
+            if table_orders[t_idx]["amount"] >= MENU_PRICE:
+                table_orders[t_idx]["amount"] -= MENU_PRICE
+            if table_orders[t_idx]["items"].get(m_name, 0) > 0:
+                table_orders[t_idx]["items"][m_name] -= 1
+
+    print(f"[{table_num}번 테이블 취소] 대기 주문 {len(canceled_orders)}건 취소 완료 (조리 착수 항목은 정상 유지)")
+
+    # 4) UI 갱신 및 파이프라인 정돈
+    update_table_ui(t_idx)
+    sync_order_queue_ui()
+    sync_connection_info_ui()
+    schedule_pipeline()
+
 def sync_connection_info_ui():
     table_overflow_stats = {}
     for item in overflow_orders:
@@ -1222,21 +1279,25 @@ for i in range(5):
     btn.grid(row=0, column=i, padx=2, sticky="ew")
     table_buttons.append(btn)
 
-# 보조 버튼
-extra_btn_frame = tk.Frame(left_main_panel, pady=2)
-extra_btn_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
+# 테이블별 대기 주문 취소 버튼부 (1~5번 테이블 개별 취소)
+cancel_btn_frame = tk.Frame(left_main_panel, pady=2)
+cancel_btn_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
-dummy_buttons.clear()
+cancel_table_buttons.clear()
 for i in range(5):
-    extra_btn_frame.columnconfigure(i, weight=1)
+    cancel_btn_frame.columnconfigure(i, weight=1)
+    t_num = i + 1
     btn = tk.Button(
-        extra_btn_frame,
-        text=f"빈버튼 {i+1}",
-        bg="#f8f9fa",
-        height=2
+        cancel_btn_frame,
+        text=f"T{t_num} 대기취소",
+        bg="#fee2e2",
+        fg="#b91c1c",
+        font=("Arial", 8, "bold"),
+        height=2,
+        command=lambda num=t_num: cancel_pending_orders_by_table(num)
     )
     btn.grid(row=0, column=i, padx=2, sticky="ew")
-    dummy_buttons.append(btn)
+    cancel_table_buttons.append(btn)
 
 # 테이블 상세 내역
 table_order_detail_frame = tk.LabelFrame(left_main_panel, text='정산 전 테이블별 주문 상세 내역', padx=5, pady=3)
