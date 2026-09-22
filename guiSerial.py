@@ -21,7 +21,7 @@ except Exception:
 # ----------------------------------------------------
 # [설정] 실전 공정 타이머 임계치 설정 (초 단위)
 # ----------------------------------------------------
-SIMULATION_MODE = False     # False: 실제 센서/모터 하드웨어 연동 구동
+SIMULATION_MODE = False     # False: 실제 하드웨어 센서/시리얼 연동 구동
 SIM_STEP_DELAY_MS = 60
 
 MENU_NAMES = ["닭고기", "목살", "삼겹살", "양념"]
@@ -93,15 +93,27 @@ def get_stage3_cook_place_gcode(slot_id):
         "G28 Z Y"
     ]
 
-def get_stage4_flip_gcode(plate_id, to_side):
+def get_stage4_flip_gcode_set1():
     """
-    to_side: 'back'(앞->뒤, D0.) or 'front'(뒤->앞, D1.)
-    plate_id: 1(P0) or 2(P1)
+    명령어 set 1 (HP1 앞->뒤 / HP2 뒤->앞)
     """
-    p_num = 0 if plate_id == 1 else 1
-    d_param = "D0." if to_side == "back" else "D1."
     return [
-        f"M103 P{p_num} S2000 F2000 {d_param}",
+        "M800 P7 S1",
+        "M103 P0 S2000 F2000 D0.",
+        "M103 P1 S2000 F2000 D1.",
+        "M800 P5 S0",
+        "M119"
+    ]
+
+def get_stage4_flip_gcode_set2():
+    """
+    명령어 set 2 (HP1 뒤->앞 / HP2 앞->뒤)
+    """
+    return [
+        "M800 P5 S1",
+        "M103 P0 S2000 F2000 D1.",
+        "M103 P1 S2000 F2000 D0.",
+        "M800 P7 S0",
         "M119"
     ]
 
@@ -120,7 +132,7 @@ def get_stage5_finish_gcode(slot_id):
 # ----------------------------------------------------
 # 2. 전역 상태 및 5종 타이머 관리 구조
 # ----------------------------------------------------
-# 규칙 1: Heat Unit 1과 2는 상호 반대 위상 배치
+# 규칙 1: HP1과 HP2는 상호 반대 배치
 plate_current_side = {1: "front", 2: "back"}
 plate_flipping_lock = {1: False, 2: False}
 
@@ -139,7 +151,7 @@ heat_units = {
     for i in range(1, NUM_SLOTS + 1)
 }
 
-# 플레이트 자체 위상 전환 타이머 (각각 2분 주기 추적)
+# 플레이트 2분 주기 추적 타이머
 plate_phase_timer = {1: 0.0, 2: 0.0}
 plate_last_tick = time.time()
 
@@ -606,10 +618,9 @@ def schedule_pipeline():
     # ==========================================
     # [1순위] 4단계: goto cook (최상위 우선순위)
     # 규칙1: HP1과 HP2는 상호 반대
-    # 규칙2: 매 2분마다 앞면/뒷면 전환
+    # 규칙2: 매 2분마다 앞면/뒷면 전환 (Set 1 / Set 2 실행)
     # ==========================================
     if not is_unit2_busy and not (plate_flipping_lock[1] or plate_flipping_lock[2]):
-        # HP1 또는 HP2 타이머가 2분(120초) 이상 도달 시 둘 다 동시에 맞교대 전환
         if plate_phase_timer[1] >= TIMER_UNIT_STAY_MAX or plate_phase_timer[2] >= TIMER_UNIT_STAY_MAX:
             print("[우선순위 1: 4단계 위상변화] 2분 주기 도달 -> HP1, HP2 상호 반대 교번 회전 실행")
             rotate_both_plates_synchronized()
@@ -724,7 +735,6 @@ def _start_stage1_pick(item):
         is_unit1_busy = False
         item["status"] = "1단계:완료대기"
         
-        # 하드웨어 동작 모사: 1단계 완료 시 도킹 구역 도착(PD2 triggered, PC7 no trigger)
         if SIMULATION_MODE:
             sensor_states["stm1_pd2"] = "triggered"
             sensor_states["stm1_pc7"] = "no trigger"
@@ -736,7 +746,7 @@ def _start_stage1_pick(item):
     execute_gcode_sequence(unit1_slot, gcode_list, on_done=_on_stage1_done)
 
 def _run_stage2_unit_change(item):
-    """2단계: Unit change (결과: stm_unit_1 PC7 trigger)"""
+    """2단계: Unit change (완료 시 stm_unit_1 PC7 trigger)"""
     global is_unit2_busy, unit2_at_prepick_pos
     is_unit2_busy = True
     unit2_at_prepick_pos = False
@@ -816,19 +826,27 @@ def _run_stage3_cook_and_place(item, target_slot):
     execute_gcode_sequence(unit2_slot, gcode_place, on_done=_on_placed)
 
 def rotate_both_plates_synchronized():
-    """4단계: HP1과 HP2 상호 반대 상태 동시 맞교대 회전 (규칙 1 & 규칙 2)"""
+    """
+    4단계: HP1과 HP2 상호 반대 교번 회전
+    - HP1이 앞면이면 -> 명령어 set 1 (HP1 앞->뒤 / HP2 뒤->앞)
+    - HP1이 뒷면이면 -> 명령어 set 2 (HP1 뒤->앞 / HP2 앞->뒤)
+    """
     global is_unit2_busy
     is_unit2_busy = True
     plate_flipping_lock[1] = True
     plate_flipping_lock[2] = True
     unit2_slot = board_slot_map.get(2, 2)
 
-    to_side_1 = "back" if plate_current_side[1] == "front" else "front"
-    to_side_2 = "front" if to_side_1 == "back" else "back"
+    if plate_current_side[1] == "front":
+        flip_gcodes = get_stage4_flip_gcode_set1()
+        to_side_1, to_side_2 = "back", "front"
+        set_name = "명령어 set 1"
+    else:
+        flip_gcodes = get_stage4_flip_gcode_set2()
+        to_side_1, to_side_2 = "front", "back"
+        set_name = "명령어 set 2"
 
-    flip_gcodes_hp1 = get_stage4_flip_gcode(1, to_side_1)
-    flip_gcodes_hp2 = get_stage4_flip_gcode(2, to_side_2)
-    combined_gcodes = flip_gcodes_hp1 + flip_gcodes_hp2
+    print(f"▶ [4단계 위상변화 실행] {set_name} 송출 (HP1 {plate_current_side[1]}->{to_side_1} | HP2 {plate_current_side[2]}->{to_side_2})")
 
     def _done_both_flips():
         global is_unit2_busy
@@ -847,11 +865,11 @@ def rotate_both_plates_synchronized():
                 heat_units[s]["heat_unit_stay_time"] = 0.0
                 heat_units[s]["last_tick"] = now
 
-        print(f"▶ [4단계 위상변화 완료] HP1 -> {to_side_1} | HP2 -> {to_side_2} (교번 반전 완료)")
+        print(f"▶ [4단계 위상변화 완료] HP1: {to_side_1} | HP2: {to_side_2} (교번 반전 완료 및 2분 대기 루프 복귀)")
         sync_heat_units_ui()
         schedule_pipeline()
 
-    execute_gcode_sequence(unit2_slot, combined_gcodes, on_done=_done_both_flips)
+    execute_gcode_sequence(unit2_slot, flip_gcodes, on_done=_done_both_flips)
 
 def _run_stage5_finish(slot_id):
     """5단계: Goto finish 배출 (조리시간 11분 30초 초과 요리)"""
@@ -1169,7 +1187,7 @@ def update_system_statusbar():
 # 12. Tkinter GUI 레이아웃
 # ----------------------------------------------------
 App = tk.Tk()
-App.title('Food Automation Orchestrator - Production 12min Architecture')
+App.title('Food Automation Orchestrator - Production 12min (Set 1 / Set 2)')
 App.resizable(width=True, height=True)
 App.geometry('1920x860+40+30')
 
@@ -1485,7 +1503,7 @@ chat_scroll.grid(row=0, column=1, sticky="ns", pady=(0, 5))
 chat_history.configure(yscrollcommand=chat_scroll.set)
 
 chat_history.configure(state='normal')
-chat_history.insert(tk.END, "[시스템] 12분 조리/2분 위상반전 실전 오케스트레이터 가동.\n", "sys")
+chat_history.insert(tk.END, "[시스템] 12분 조리/2분 위상반전 (Set 1/Set 2) 오케스트레이터 가동.\n", "sys")
 chat_history.configure(state='disabled')
 
 chat_input_frame = tk.Frame(chat_lf)
