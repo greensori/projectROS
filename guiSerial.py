@@ -19,19 +19,20 @@ except Exception:
     HAS_NVML = False
 
 # ----------------------------------------------------
-# [설정] 테스트 모드 및 타이머 임계치 설정 (초 단위)
+# [설정] 실전 공정 타이머 임계치 설정 (초 단위)
 # ----------------------------------------------------
-SIMULATION_MODE = True      # True: 센서/모터 미연결 시 자동 바이패스 모드
+SIMULATION_MODE = False     # False: 실제 센서/모터 하드웨어 연동 구동
 SIM_STEP_DELAY_MS = 60
 
 MENU_NAMES = ["닭고기", "목살", "삼겹살", "양념"]
 MENU_PRICE = 6000
 
-# 타이머 임계치 (단위: 초)
-TIMER_TOTAL_MAX = 60.0            # 1번: 총 조리시간 상한 (1분 만료 시 자동 배출)
-TIMER_PHASE_MAX = 30.0            # 2, 3번: 앞면 / 뒷면 조리시간 상한 (30초)
-TIMER_UNIT_STAY_MAX = 10.0        # 4번: Heat unit 위상 연속 체류 상한 (10초 주기 반전)
-TIMER_STAGE2_BLOCK_LIMIT = 50.0   # 50초 초과 조리 요리 존재 시 2단계/3단계 진입 차단
+# [운영 기준 시간 설정]
+TIMER_TOTAL_MAX = 720.0          # 1번: 총 조리시간 상한 12분 (720초)
+TIMER_PHASE_MAX = 360.0          # 2, 3번: 앞면 / 뒷면 조리시간 각 상한 6분 (360초)
+TIMER_UNIT_STAY_MAX = 120.0      # 4번: Heat unit 위상 연속 체류 상한 2분 (120초)
+TIMER_BLOCK_AND_FINISH = 690.0   # 배출 트리거 및 2, 3단계 차단 임계치 11분 30초 (690초)
+TIMER_STAGE3_MIN_REMAIN = 20.0   # 3단계 진입 조건: 위상 반전까지 남은 시간 최소 20초 이상
 
 NUM_SLOTS = 14
 
@@ -93,6 +94,10 @@ def get_stage3_cook_place_gcode(slot_id):
     ]
 
 def get_stage4_flip_gcode(plate_id, to_side):
+    """
+    to_side: 'back'(앞->뒤, D0.) or 'front'(뒤->앞, D1.)
+    plate_id: 1(P0) or 2(P1)
+    """
     p_num = 0 if plate_id == 1 else 1
     d_param = "D0." if to_side == "back" else "D1."
     return [
@@ -115,7 +120,8 @@ def get_stage5_finish_gcode(slot_id):
 # ----------------------------------------------------
 # 2. 전역 상태 및 5종 타이머 관리 구조
 # ----------------------------------------------------
-plate_current_side = {1: "front", 2: "front"}
+# 규칙 1: Heat Unit 1과 2는 상호 반대 위상 배치
+plate_current_side = {1: "front", 2: "back"}
 plate_flipping_lock = {1: False, 2: False}
 
 heat_units = {
@@ -123,15 +129,19 @@ heat_units = {
         "status": "idle",             # 'idle', 'reserved', 'cooking', 'finished'
         "plate_id": 1 if i <= 7 else 2,
         "order": None,
-        "total_cook_time": 0.0,       # 1. 총 조리시간 (최대 1분)
-        "front_cook_time": 0.0,       # 2. 앞면 총 조리시간 (최대 30초)
-        "back_cook_time": 0.0,        # 3. 뒷면 총 조리시간 (최대 30초)
-        "heat_unit_stay_time": 0.0,   # 4. 현 위상 연속 체류시간 (10초 시 반전)
+        "total_cook_time": 0.0,       # 1. 총 조리시간 (최대 12분)
+        "front_cook_time": 0.0,       # 2. 앞면 총 조리시간 (최대 6분)
+        "back_cook_time": 0.0,        # 3. 뒷면 총 조리시간 (최대 6분)
+        "heat_unit_stay_time": 0.0,   # 4. 현 위상 연속 체류시간 (최대 2분)
         "total_process_time": 0.0,    # 5. 전체 공정 누적시간
         "last_tick": 0.0
     }
     for i in range(1, NUM_SLOTS + 1)
 }
+
+# 플레이트 자체 위상 전환 타이머 (각각 2분 주기 추적)
+plate_phase_timer = {1: 0.0, 2: 0.0}
+plate_last_tick = time.time()
 
 sensor_states = {
     "stm1_pc7": "no trigger",
@@ -511,47 +521,42 @@ def sync_heat_units_ui():
         hp_no = info["plate_id"]
         plate_side = plate_current_side[hp_no]
         side_str = "앞면" if plate_side == "front" else "뒷면"
+        remain_s = max(0, int(TIMER_UNIT_STAY_MAX - plate_phase_timer[hp_no]))
         
         if st == "idle":
             btn.configure(
-                text=f"조리대 {h_id} (HP{hp_no}-{side_str})\n[비어있음]\n총 00:00\n앞 00:00 | 뒤 00:00\n체류: 00:00",
+                text=f"조리대 {h_id} (HP{hp_no}-{side_str})\n[비어있음]\n총 00:00\n앞 00:00 | 뒤 00:00\n전환대기: {remain_s//60:02d}:{remain_s%60:02d}",
                 bg="#e2e8f0", fg="#64748b", font=("Arial", 7)
             )
         elif st in ["reserved", "cooking"]:
             tot_s = int(info["total_cook_time"])
             f_s = int(info["front_cook_time"])
             b_s = int(info["back_cook_time"])
-            u_s = int(info["heat_unit_stay_time"])
             
             bg_color = "#16a34a" if plate_side == "front" else "#2563eb"
 
             display_text = (
                 f"조리대 {h_id} (HP{hp_no}-{side_str})\n"
-                f"총 {tot_s//60:02d}:{tot_s%60:02d} / 01:00\n"
+                f"총 {tot_s//60:02d}:{tot_s%60:02d} / 12:00\n"
                 f"앞 {f_s//60:02d}:{f_s%60:02d} | 뒤 {b_s//60:02d}:{b_s%60:02d}\n"
-                f"체류: {u_s//60:02d}:{u_s%60:02d} / 00:10"
+                f"전환대기: {remain_s//60:02d}:{remain_s%60:02d}"
             )
             btn.configure(
                 text=display_text, bg=bg_color, fg="#ffffff", font=("Arial", 7, "bold")
             )
         elif st == "finished":
             btn.configure(
-                text=f"조리대 {h_id} (HP{hp_no}-{side_str})\n[조리완료 배출대기]\n총 01:00 만료\n서빙 대기중",
+                text=f"조리대 {h_id} (HP{hp_no}-{side_str})\n[조리완료 배출대기]\n총 12:00 만료\n서빙 대기중",
                 bg="#ea580c", fg="#ffffff", font=("Arial", 7, "bold")
             )
 
 # ----------------------------------------------------
-# 7. 우선순위 스케줄러 (데드락 방지 & 슬롯 탐색 강화)
+# 7. 우선순위 기반 오케스트레이터 (새로운 공정 순서 적용)
 # ----------------------------------------------------
-def has_cooking_over_50s():
+def has_cooking_over_limit():
+    """요리 조리타이머가 11분 30초(690초)를 초과한 상태 확인"""
     for info in heat_units.values():
-        if info["status"] in ["cooking", "finished"] and info["total_cook_time"] >= TIMER_STAGE2_BLOCK_LIMIT:
-            return True
-    return False
-
-def has_finished_food():
-    for info in heat_units.values():
-        if info["status"] == "finished" or (info["status"] == "cooking" and info["total_cook_time"] >= TIMER_TOTAL_MAX):
+        if info["status"] in ["cooking", "finished"] and info["total_cook_time"] >= TIMER_BLOCK_AND_FINISH:
             return True
     return False
 
@@ -562,15 +567,17 @@ def get_ready_stage1_item():
     return None
 
 def get_empty_heat_slot_in_front_plate():
-    # 1) 앞면인 플레이트에서 빈 슬롯 우선 탐색
-    available_plates = [p for p in [1, 2] if plate_current_side[p] == "front"]
+    """비어있는 조리대 칸 중 앞면 상태이고 위상 반전까지 남은 시간이 20초 이상인 슬롯 탐색"""
+    available_plates = [
+        p for p in [1, 2] 
+        if plate_current_side[p] == "front" and (TIMER_UNIT_STAY_MAX - plate_phase_timer[p]) >= TIMER_STAGE3_MIN_REMAIN
+    ]
     for p in available_plates:
         slot_range = range(1, 8) if p == 1 else range(8, 15)
         for s in slot_range:
             if heat_units[s]["status"] == "idle":
                 return s
     
-    # 2) 시뮬레이션 모드에서는 앞면 여부와 무관하게 빈 슬롯이 있으면 즉시 반환
     if SIMULATION_MODE:
         for s in range(1, NUM_SLOTS + 1):
             if heat_units[s]["status"] == "idle":
@@ -578,6 +585,14 @@ def get_empty_heat_slot_in_front_plate():
     return None
 
 def schedule_pipeline():
+    """
+    개편된 우선순위 처리 오케스트레이터:
+    1순위 : 4단계 goto cook (HP1/HP2 상호 반대 위치 유지, 매 2분 주기 교번 회전)
+    2순위 : 1단계 pick and place (독립 구동)
+    3순위 : 5단계 goto finish (11분 30초 초과 요리 우선 배출)
+    4순위 : 2단계 unit change (11분 30초 초과 요리 없을 때 진입 -> 완료 시 PC7 trigger)
+    5순위 : 3단계 cook and place (앞면 슬롯 & 남은시간 20초 이상)
+    """
     global is_unit1_busy, is_unit2_busy
 
     while len(active_orders) < NUM_SLOTS and overflow_orders:
@@ -589,7 +604,21 @@ def schedule_pipeline():
     sync_connection_info_ui()
 
     # ==========================================
-    # [1순위] 1단계: pick and place (독립 구동)
+    # [1순위] 4단계: goto cook (최상위 우선순위)
+    # 규칙1: HP1과 HP2는 상호 반대
+    # 규칙2: 매 2분마다 앞면/뒷면 전환
+    # ==========================================
+    if not is_unit2_busy and not (plate_flipping_lock[1] or plate_flipping_lock[2]):
+        # HP1 또는 HP2 타이머가 2분(120초) 이상 도달 시 둘 다 동시에 맞교대 전환
+        if plate_phase_timer[1] >= TIMER_UNIT_STAY_MAX or plate_phase_timer[2] >= TIMER_UNIT_STAY_MAX:
+            print("[우선순위 1: 4단계 위상변화] 2분 주기 도달 -> HP1, HP2 상호 반대 교번 회전 실행")
+            rotate_both_plates_synchronized()
+            return
+
+    # ==========================================
+    # [2순위] 1단계: pick and place (독립 구동)
+    # 조건1: 주문완료 대기 요리 존재
+    # 조건2: stm_unit_1 (PC7, PD2) 센서 no trigger 상태
     # ==========================================
     if not is_unit1_busy:
         c1_pending = None
@@ -604,16 +633,20 @@ def schedule_pipeline():
         if c1_pending and pc7_ok and pd2_ok:
             _start_stage1_pick(c1_pending)
 
-    # Unit 2가 다른 모션 중이면 스케줄러 일시 대기
+    # Unit 2가 모션 중이면 3, 4, 5순위 대기
     if is_unit2_busy:
         return
 
     # ==========================================
-    # [2순위] 5단계: goto finish (완료 요리 배출 우선)
+    # [3순위] 5단계: goto finish (조리 완료 유닛 신속 배출)
+    # 조건1: 조리시간 11분 30초 초과
+    # 조건2: stm_unit_1 (PC7) no trigger 상태
+    # 조건3: 대상 heat unit의 상태가 앞면
+    # 조건4: stm_unit_2가 픽업 전 위치에 위치
     # ==========================================
     finished_candidates = []
     for s_id, info in heat_units.items():
-        if info["status"] in ["cooking", "finished"] and info["total_cook_time"] >= TIMER_TOTAL_MAX:
+        if info["status"] in ["cooking", "finished"] and info["total_cook_time"] >= TIMER_BLOCK_AND_FINISH:
             finished_candidates.append((s_id, info["total_cook_time"], info["plate_id"]))
     
     if finished_candidates:
@@ -624,71 +657,33 @@ def schedule_pipeline():
             c4_pos_ok = SIMULATION_MODE or unit2_at_prepick_pos
 
             if c2_pc7_ok and c3_plate_front and c4_pos_ok:
-                print(f"[우선순위 2: 5단계 배출] 슬롯 {s_id} (조리시간 {c_time:.1f}초, HP{p_id})")
+                print(f"[우선순위 3: 5단계 배출] 슬롯 {s_id} (조리시간 {c_time:.1f}초, HP{p_id})")
                 _run_stage5_finish(s_id)
                 return
 
     # ==========================================
-    # [3순위] 2단계: unit change
+    # [4순위] 2단계: unit change
+    # 조건1: 11분 30초 초과 요리가 없을 것
+    # 조건2: stm_unit_1 (PD2) trigger, (PC7) no trigger
+    # 조건3: 1단계 완료대기 상태일 것
     # ==========================================
     stage1_done_item = get_ready_stage1_item()
     if stage1_done_item is not None:
-        if SIMULATION_MODE:
-            block_by_timer = False
-            block_by_finished = False
-        else:
-            block_by_timer = has_cooking_over_50s()
-            block_by_finished = has_finished_food()
-
+        block_by_limit = has_cooking_over_limit() if not SIMULATION_MODE else False
         pd2_trig = SIMULATION_MODE or (sensor_states["stm1_pd2"] == "triggered")
         pc7_notrig = SIMULATION_MODE or (sensor_states["stm1_pc7"] == "no trigger")
 
-        if not block_by_timer and not block_by_finished and pd2_trig and pc7_notrig:
-            print(f"[우선순위 3: 2단계 이송] T{stage1_done_item['table']} {stage1_done_item['name']}")
+        if not block_by_limit and pd2_trig and pc7_notrig:
+            print(f"[우선순위 4: 2단계 이송] T{stage1_done_item['table']} {stage1_done_item['name']}")
             _run_stage2_unit_change(stage1_done_item)
             return
 
     # ==========================================
-    # [4순위] 4단계: goto cook (위상 반전)
-    # ==========================================
-    for p_id in [1, 2]:
-        if plate_flipping_lock[p_id]:
-            continue
-
-        should_flip = False
-        reason = ""
-        current_side = plate_current_side[p_id]
-        to_side = "back" if current_side == "front" else "front"
-
-        slot_range = range(1, 8) if p_id == 1 else range(8, 15)
-        
-        # 규칙 2: 1분 만료 요리가 있는데 뒷면인 경우 즉시 앞면 복귀
-        has_finished_in_plate = any(
-            heat_units[s]["status"] in ["cooking", "finished"] and heat_units[s]["total_cook_time"] >= TIMER_TOTAL_MAX
-            for s in slot_range
-        )
-        if has_finished_in_plate and current_side == "back":
-            should_flip = True
-            to_side = "front"
-            reason = "조리 완료 요리 배출을 위한 자동 앞면 복귀"
-
-        # 규칙 1: 10초 주기 반전
-        if not should_flip:
-            for s in slot_range:
-                info = heat_units[s]
-                if info["status"] == "cooking":
-                    if info["heat_unit_stay_time"] >= TIMER_UNIT_STAY_MAX:
-                        should_flip = True
-                        reason = f"{current_side}면 체류시간 {TIMER_UNIT_STAY_MAX}초 도달 (10초 주기 반전)"
-                        break
-
-        if should_flip:
-            print(f"[우선순위 4: 4단계 위상변화] Heatplate {p_id} {current_side} -> {to_side} ({reason})")
-            rotate_plate_flip(p_id, to_side)
-            return
-
-    # ==========================================
-    # [5순위] 3단계: cook and place (폴백 처리)
+    # [5순위] 3단계: cook and place
+    # 조건1: 11분 30초 초과 요리가 없을 것
+    # 조건2: stm_unit_1 (PC7) trigger 상태
+    # 조건3: 비어있는 조리대 칸이 앞면 상태일 것
+    # 조건4: 상태 변화(2분 만료)까지 남은 시간이 20초 이상일 것
     # ==========================================
     placing_item = None
     for item in active_orders:
@@ -697,17 +692,20 @@ def schedule_pipeline():
             break
 
     if placing_item:
+        c1_no_limit = not has_cooking_over_limit() if not SIMULATION_MODE else True
+        c2_pc7_trig = SIMULATION_MODE or (sensor_states["stm1_pc7"] == "triggered")
         target_slot = get_empty_heat_slot_in_front_plate()
-        if target_slot is not None:
-            print(f"[우선순위 5: 3단계 안착 재개] T{placing_item['table']} -> 슬롯 {target_slot}")
+
+        if c1_no_limit and c2_pc7_trig and (target_slot is not None):
+            print(f"[우선순위 5: 3단계 안착] T{placing_item['table']} -> 앞면 슬롯 {target_slot} (20초 이상 확보)")
             _run_stage3_cook_and_place(placing_item, target_slot)
             return
 
 # ----------------------------------------------------
-# 8. 세부 공정 실행 루틴 (다이렉트 체이닝 적용)
+# 8. 세부 공정 실행 루틴 (1 ~ 5단계)
 # ----------------------------------------------------
 def _start_stage1_pick(item):
-    """1단계: Pick and place"""
+    """1단계: Pick and place (stm_unit_1 단독 구동)"""
     global is_unit1_busy
     is_unit1_busy = True
     unit1_slot = board_slot_map.get(1, 1)
@@ -725,14 +723,20 @@ def _start_stage1_pick(item):
         global is_unit1_busy
         is_unit1_busy = False
         item["status"] = "1단계:완료대기"
-        print(f"[1단계 완료: 대기] T{item['table']} {item['name']} -> 2단계 이송 준비")
+        
+        # 하드웨어 동작 모사: 1단계 완료 시 도킹 구역 도착(PD2 triggered, PC7 no trigger)
+        if SIMULATION_MODE:
+            sensor_states["stm1_pd2"] = "triggered"
+            sensor_states["stm1_pc7"] = "no trigger"
+
+        print(f"[1단계 완료: 대기] T{item['table']} {item['name']} -> 2단계 이송 대기")
         sync_order_queue_ui()
         schedule_pipeline()
 
     execute_gcode_sequence(unit1_slot, gcode_list, on_done=_on_stage1_done)
 
 def _run_stage2_unit_change(item):
-    """2단계: Unit change (인계 즉시 3단계로 직결하여 락 제거)"""
+    """2단계: Unit change (결과: stm_unit_1 PC7 trigger)"""
     global is_unit2_busy, unit2_at_prepick_pos
     is_unit2_busy = True
     unit2_at_prepick_pos = False
@@ -748,29 +752,20 @@ def _run_stage2_unit_change(item):
     u2_approach = get_stage2_unit2_approach_gcode(b1_x)
 
     def _step2_dock_unit1():
-        # 2) Unit 1 Z축 도킹
         execute_gcode_sequence(unit1_slot, GCODE_STAGE2_UNIT1_DOCK, on_done=_step2_grip_unit2)
 
     def _step2_grip_unit2():
-        # 3) Unit 2 그리퍼 파지
         execute_gcode_sequence(unit2_slot, GCODE_STAGE2_UNIT2_GRIP, on_done=_step2_release_unit1)
 
     def _step2_release_unit1():
-        # 4) Unit 1 릴리즈 및 복귀
         def _on_u1_released():
             global is_unit2_busy
-            print("[2단계 완료] stm_unit_1 원점 복귀 완료 -> 조리대 빈 슬롯 확인")
-            
-            target_slot = get_empty_heat_slot_in_front_plate()
-            if target_slot is not None:
-                # 슬롯이 확보되면 스케줄러를 거치지 않고 즉시 3단계 안착 실행
-                _run_stage3_cook_and_place(item, target_slot)
-            else:
-                # 슬롯이 전혀 없는 경우에만 완료대기로 남기고 Unit 2 락 해제
-                item["status"] = "2단계:완료대기"
-                is_unit2_busy = False
-                sync_order_queue_ui()
-                schedule_pipeline()
+            print("[2단계 완료] stm_unit_1 복귀 완료 -> stm_unit_1(PC7) 센서 triggered 변화")
+            sensor_states["stm1_pc7"] = "triggered"
+            item["status"] = "2단계:완료대기"
+            is_unit2_busy = False
+            sync_order_queue_ui()
+            schedule_pipeline()
 
         execute_gcode_sequence(unit1_slot, GCODE_STAGE2_UNIT1_RELEASE, on_done=_on_u1_released)
 
@@ -790,7 +785,7 @@ def _run_stage3_cook_and_place(item, target_slot):
 
     sync_order_queue_ui()
     sync_heat_units_ui()
-    print(f"\n▶ [3단계 시작: Cook and place] 슬롯 {target_slot} (HP{plate_no}) 안착 이동")
+    print(f"\n▶ [3단계 시작: Cook and place] 슬롯 {target_slot} (HP{plate_no}) 안착")
 
     gcode_place = get_stage3_cook_place_gcode(target_slot)
 
@@ -798,6 +793,9 @@ def _run_stage3_cook_and_place(item, target_slot):
         global is_unit2_busy, unit2_at_prepick_pos
         is_unit2_busy = False
         unit2_at_prepick_pos = True
+        
+        # 3단계 완료 후 PC7 센서는 다시 no trigger로 복귀
+        sensor_states["stm1_pc7"] = "no trigger"
 
         now = time.time()
         item["status"] = "4단계:조리중"
@@ -810,47 +808,53 @@ def _run_stage3_cook_and_place(item, target_slot):
         heat_units[target_slot]["total_process_time"] = 0.0
         heat_units[target_slot]["last_tick"] = now
 
-        print(f"[3단계 완료] 조리대 {target_slot} 안착 완료 -> 4단계 조리 타이머 가동")
+        print(f"[3단계 완료] 조리대 {target_slot} 안착 완료 -> 4단계 조리 및 5종 타이머 가동")
         sync_order_queue_ui()
         sync_heat_units_ui()
         schedule_pipeline()
 
     execute_gcode_sequence(unit2_slot, gcode_place, on_done=_on_placed)
 
-def rotate_plate_flip(plate_id, to_side):
-    """4단계: Goto cook 위상 반전"""
+def rotate_both_plates_synchronized():
+    """4단계: HP1과 HP2 상호 반대 상태 동시 맞교대 회전 (규칙 1 & 규칙 2)"""
     global is_unit2_busy
-    if is_unit2_busy or plate_flipping_lock[plate_id]:
-        return
-
-    plate_flipping_lock[plate_id] = True
     is_unit2_busy = True
+    plate_flipping_lock[1] = True
+    plate_flipping_lock[2] = True
     unit2_slot = board_slot_map.get(2, 2)
-    
-    flip_gcodes = get_stage4_flip_gcode(plate_id, to_side)
 
-    def _done_flip():
+    to_side_1 = "back" if plate_current_side[1] == "front" else "front"
+    to_side_2 = "front" if to_side_1 == "back" else "back"
+
+    flip_gcodes_hp1 = get_stage4_flip_gcode(1, to_side_1)
+    flip_gcodes_hp2 = get_stage4_flip_gcode(2, to_side_2)
+    combined_gcodes = flip_gcodes_hp1 + flip_gcodes_hp2
+
+    def _done_both_flips():
         global is_unit2_busy
         is_unit2_busy = False
-        plate_flipping_lock[plate_id] = False
-        plate_current_side[plate_id] = to_side
+        plate_flipping_lock[1] = False
+        plate_flipping_lock[2] = False
+
+        plate_current_side[1] = to_side_1
+        plate_current_side[2] = to_side_2
+        plate_phase_timer[1] = 0.0
+        plate_phase_timer[2] = 0.0
 
         now = time.time()
-        slot_range = range(1, 8) if plate_id == 1 else range(8, 15)
-        for s in slot_range:
-            info = heat_units[s]
-            if info["status"] == "cooking":
-                info["heat_unit_stay_time"] = 0.0
-                info["last_tick"] = now
+        for s in range(1, NUM_SLOTS + 1):
+            if heat_units[s]["status"] == "cooking":
+                heat_units[s]["heat_unit_stay_time"] = 0.0
+                heat_units[s]["last_tick"] = now
 
-        print(f"▶ [4단계 위상변화 완료] Heatplate {plate_id} 전환 -> {to_side}")
+        print(f"▶ [4단계 위상변화 완료] HP1 -> {to_side_1} | HP2 -> {to_side_2} (교번 반전 완료)")
         sync_heat_units_ui()
         schedule_pipeline()
 
-    execute_gcode_sequence(unit2_slot, flip_gcodes, on_done=_done_flip)
+    execute_gcode_sequence(unit2_slot, combined_gcodes, on_done=_done_both_flips)
 
 def _run_stage5_finish(slot_id):
-    """5단계: Goto finish 배출"""
+    """5단계: Goto finish 배출 (조리시간 11분 30초 초과 요리)"""
     global is_unit2_busy, unit2_at_prepick_pos
     is_unit2_busy = True
     unit2_at_prepick_pos = False
@@ -895,10 +899,17 @@ def _run_stage5_finish(slot_id):
 # 9. 타이머 업데이트 엔진 (0.5초 주기)
 # ----------------------------------------------------
 def process_cooking_timer_tick():
+    global plate_last_tick
     if not is_running or not App.winfo_exists():
         return
 
     now = time.time()
+    dt_plate = now - plate_last_tick
+    plate_last_tick = now
+
+    # 플레이트별 2분 체류 타이머 적산
+    plate_phase_timer[1] += dt_plate
+    plate_phase_timer[2] += dt_plate
 
     for h_id in range(1, NUM_SLOTS + 1):
         info = heat_units[h_id]
@@ -1145,7 +1156,7 @@ def update_system_statusbar():
         f"[RAM] {ram_pct:4.1f}% ({ram_used:.1f}/{ram_tot:.1f} GB)   |   "
         f"[GPU] {gpu_load}   |   "
         f"[GPU VRAM] {vram_used}   |   "
-        f"[MODE] {'SIMULATION (ALL SENSOR BYPASS)' if SIMULATION_MODE else 'HARDWARE SERIAL'}"
+        f"[MODE] {'SIMULATION' if SIMULATION_MODE else 'HARDWARE SERIAL'}"
     )
 
     if sys_status_label.winfo_exists():
@@ -1158,7 +1169,7 @@ def update_system_statusbar():
 # 12. Tkinter GUI 레이아웃
 # ----------------------------------------------------
 App = tk.Tk()
-App.title('Food Automation Orchestrator - Non-blocking Pipeline')
+App.title('Food Automation Orchestrator - Production 12min Architecture')
 App.resizable(width=True, height=True)
 App.geometry('1920x860+40+30')
 
@@ -1186,9 +1197,10 @@ slot_dummy_buttons.clear()
 for i in range(14):
     slot_btn_panel.rowconfigure(i, weight=1)
     hp_no = 1 if i < 7 else 2
+    init_side = "앞면" if plate_current_side[hp_no] == "front" else "뒷면"
     btn = tk.Button(
         slot_btn_panel,
-        text=f"조리대 {i+1} (HP{hp_no}-앞면)\n[비어있음]\n총 00:00\n앞 00:00 | 뒤 00:00\n체류: 00:00",
+        text=f"조리대 {i+1} (HP{hp_no}-{init_side})\n[비어있음]\n총 00:00\n앞 00:00 | 뒤 00:00\n전환대기: 02:00",
         font=("Arial", 7),
         bg="#e2e8f0",
         fg="#64748b",
@@ -1473,7 +1485,7 @@ chat_scroll.grid(row=0, column=1, sticky="ns", pady=(0, 5))
 chat_history.configure(yscrollcommand=chat_scroll.set)
 
 chat_history.configure(state='normal')
-chat_history.insert(tk.END, "[시스템] 2-3단계 다이렉트 체이닝 적용 완료. 테스트 모드 가동.\n", "sys")
+chat_history.insert(tk.END, "[시스템] 12분 조리/2분 위상반전 실전 오케스트레이터 가동.\n", "sys")
 chat_history.configure(state='disabled')
 
 chat_input_frame = tk.Frame(chat_lf)
