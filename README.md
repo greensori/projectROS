@@ -63,12 +63,20 @@
 │   │   |- M800 p2 s1
 │   │   └- G28 Z Y
 ├── 4단계 goto cook
-│   ├── stm보드_2 (heat unit 1에서 조리중인 상태의 조리중에서 앞면 혹은 뒷면 타이머가 10초을 초과한경우 전체가 위상변화, heat unit 2또한 같음) 
+│   ├── stm보드_2 : 명령어 set 1
+│   │   |- M800 p7 s1
 │   │   |- M103 p0 s2000 f2000 D0. #heat_unit1(stm_unit2_tim3_ch1) 위상변화 코드(앞->뒤) 
+│   │   |- M103 p1 s2000 f2000 D1. #heat_unit2(stm_unit2_tim3_ch2) 위상변화 코드(뒤->앞) 
+│   │   |- M800 p5 s0
+│   │   |- M119
+│   │   |- 2분 대기
+│   ├── stm보드_2 : 명령어 set 2
+│   │   |- M800 p5 s1
 │   │   |- M103 p0 s2000 f2000 D1. #heat_unit1(stm_unit2_tim3_ch1) 위상변화 코드(뒤->앞) 
 │   │   |- M103 p1 s2000 f2000 D0. #heat_unit2(stm_unit2_tim3_ch2) 위상변화 코드(앞->뒤) 
-│   │   |- M103 p1 s2000 f2000 D1. #heat_unit2(stm_unit2_tim3_ch2) 위상변화 코드(뒤->앞) 
-│   │   └- M119
+│   │   |- M800 p7 s0
+│   │   |- M119
+│   │   └- 2분 대기
 │   └──  
 ├── 5단계 goto finish 
 │   ├── stm보드_2 (총조리시간이 12분을 초과한 요리가 있는 경우 그 위치로 이동) 
