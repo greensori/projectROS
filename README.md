@@ -31,7 +31,7 @@
 │   │   └── [RULE_C] IF (PD2: CLOSED)
 │   │       └── ACTION_SEQUENCE:
 │   │           `- G4 P1000                  # 1초 대기 후 M119 재조회
-│   │ 
+│   │  
 │   ├── BRANCH_RULES:
 │   │   ├── [CASE_A] IF (주문메뉴('수블라키')
 │   │   │   └── ACTION_SEQUENCE:
