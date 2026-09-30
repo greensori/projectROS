@@ -10,11 +10,136 @@
 4. heat unit 조리시간을 기록하는 타이머(최대 2분, 하지만 초과할수 있음)
 
 
-
+조리 프로세스
+├── 1단계 pick and place (stm_unit_1)
+│   ├── EXEC_TRIGGER: 주문 대기열 존재 && 이전 공정 완료
+│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+│   │
+│   ├── BRANCH_RULES:
+│   │   ├── [RULE_A] IF (PD2: OPEN && 주문메뉴('수블라키', '투움')
+│   │   │   └── ACTION_SEQUENCE:
+│   │   │       |- M103 P0 S2000 F2000 D0   # 냉장고 오픈
+│   │   │       |- M103 P2 S2000 F2000 D0   # 접시 축 가동
+│   │   │       `- G28                      # 시작전 복귀
+│   │   │    
+│   │   ├── [RULE_B] IF (PD2: OPEN && 주문메뉴('룰라', '비프샤슬릭', '치킨샤슬릭')
+│   │   │   └── ACTION_SEQUENCE:
+│   │   │       |- M103 P1 S2000 F2000 D0   # 냉장고 오픈
+│   │   │       |- M103 P3 S2000 F2000 D0   # 접시 축 가동
+│   │   │       `- G28                      # 시작전 복귀  
+│   │   │
+│   │   └── [RULE_C] IF (PD2: CLOSED)
+│   │       └── ACTION_SEQUENCE:
+│   │           `- G4 P1000                  # 1초 대기 후 M119 재조회
+│   │ 
+│   ├── BRANCH_RULES:
+│   │   ├── [CASE_A] IF (주문메뉴('수블라키')
+│   │   │   └── ACTION_SEQUENCE:
+│   │   │       `- G1 x2000                     # 축이동
+│   │   ├── [CASE_B] IF (주문메뉴('투움')
+│   │   │   └── ACTION_SEQUENCE:
+│   │   │       `- G1 x2400                     # 축이동
+│   │   ├── [CASE_C] IF (주문메뉴('룰라')
+│   │   │   └── ACTION_SEQUENCE:
+│   │   │       `- G1 x2800                     # 축이동
+│   │   ├── [CASE_D] IF (주문메뉴('비프샤슬릭')
+│   │   │   └── ACTION_SEQUENCE:
+│   │   │       `- G1 x3300                     # 축이동
+│   │   └── [CASE_E] IF (주문메뉴('치킨샤슬릭')
+│   │       └── ACTION_SEQUENCE:
+│   │           `- G1 x3600                     # 축이동
+│   │ 
+│   ├── COMMON_ACTIONS:
+│   │   |- G1 X200 (조정 이동)
+│   │   |- G1 z2000 
+│   │   |- G1 y2000
+│   │   |- G1 z200  
+│   │   |- G40 (z축 센서 탐지시 까지 이동, 냉장고 쪽)
+│   │   |- M800 P4 S1 (공압유닛 작동)
+│   │   |- M800 P5 S1 (공압유닛 작동)
+│   │   `- G28 z y
+│   │ 
+│   └── BRANCH_RULES:
+│       ├── [RULE_A] IF (PD2: OPEN && 주문메뉴('수블라키', '투움')
+│       │   └── ACTION_SEQUENCE:
+│       │       |- M103 P0 S2000 F2000 D1   # 냉장고 닫기
+│       │       `- M119                     # 머신 상태 조회
+│       │    
+│       └── [RULE_B] IF (PD2: OPEN && 주문메뉴('룰라', '비프샤슬릭', '치킨샤슬릭')
+│          └── ACTION_SEQUENCE:
+│               |- M103 P1 S2000 F2000 D1   # 냉장고 닫기
+│               `- M119                     # 머신 상태 조회
+│
+├── 2-1단계 unit change (stm_unit_2)
+│   ├── EXEC_TRIGGER: 요리 조리타이머가 11분 30초를 초과한 상태가 없을 것 && 1단계 공정이 완료대기 상태일것
+│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7)
+│   │
+│   └── BRANCH_RULES:
+│       ├── [RULE_A] IF (PC6: OPEN)
+│       │   └── ACTION_SEQUENCE:
+│       │       |- G1 X()           # stm보드_1 에서 x축의 좌표를 받아서 그 좌표 +2500만큼 거리를 이동
+│       │       `- G38              # x축 센서탐지(PC6)까지 이동
+│       │    
+│       └── [RULE_B] IF (PC6: CLOSED)
+│           └── ACTION_SEQUENCE:
+│               `- M119                  # 1초 대기 후 M119 재조회
+│
+├── 2-2단계 unit change (stm_unit_1)
+│   └── COMMON_ACTIONS:
+│       `- G40 (z축 센서(PC6) 탐지시 까지 이동, 이송유닛 쪽)
+│
+├── 2-3단계 unit change (stm_unit_2)
+│   └── COMMON_ACTIONS:
+│       |- M800 p0 S1
+│       `- 1초 대기
+│
+├── 2-4단계 unit change (stm_unit_1)
+│   ├── COMMON_ACTIONS:
+│   │   |- M800 P0 S0
+│   │   |- M800 P1 S0
+│   │   |- 2초 대기
+│   │   `- G28 
+│   └── (이 단계 이후 조리대기 중인 요리가 있는 경우 1단계로 이동, 하지만 기존 코드는 순차적으로 계속 실행)
+│
+├── 3단계 cook and place (stm_unit_2) #2개의 heat unit이 있으며, 각각의heat unit에는 최대 7개의 메뉴가 들어갈수 있음
+│   ├── EXEC_TRIGGER: 1 - 14번 heat unit중 idle 상태가 있을것, heat unit 1번 혹은 2번중 한개가 앞면을 표시하고 있을것
+│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+│   │
+│   └── COMMON_ACTIONS:
+│       |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
+│       |- G1 Z1500 Y1500
+│       |- M800 p0 s0
+│       |- 1초 대기
+│       |- M800 p2 s1
+│       `- G28 Z Y
+│
+├── 4단계 go to cook (stm_unit_2) 
+│   ├── EXEC_TRIGGER: NORMAL
+│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+│   │
+│   └── BRANCH_RULES:
+│       ├── [CASE_A] IF (PC6: OPEN)
+│       │   └── ACTION_SEQUENCE:
+│       │       |- M800 p7 s1
+│       │       |- M103 p0 s2000 f2000 D0. #heat_unit1(stm_unit2_tim3_ch1) 위상변화 코드(앞->뒤) 
+│       │       |- M103 p1 s2000 f2000 D1. #heat_unit2(stm_unit2_tim3_ch2) 위상변화 코드(뒤->앞) 
+│       │       |- M800 p5 s0
+│       │       |- M119
+│       │       `- 2분 대기
+│       │    
+│       └── [CASE_B] IF (PC6: CLOSED)
+│           └── ACTION_SEQUENCE:
+│               |- M800 p5 s1
+│               |- M103 p0 s2000 f2000 D1. #heat_unit1(stm_unit2_tim3_ch1) 위상변화 코드(뒤->앞) 
+│               |- M103 p1 s2000 f2000 D0. #heat_unit2(stm_unit2_tim3_ch2) 위상변화 코드(앞->뒤) 
+│               |- M800 p7 s0
+│               |- M119
+│               `- 2분 대기
+│
 
 
 조리 프로세스
-├── 1단계 pick and place     #메뉴 주문버튼 작동 이후 g코드 전송 순서
+├── 1단계 pick and place     #메뉴 주문버튼 작동 이후 대기열에 대기중 주문 있을 경우에 g코드 전송 순서
 │   ├── stm_unit_1 (실행조건 : )
 │   │   |- G28
 │   │   |- M119  #센서 정보 받아서 연동시키시 (tim2 3축 좌표, 로드리스 위치, 접시가 ready 되었는지?, 센서상태(pd2, pc7, pc6)
