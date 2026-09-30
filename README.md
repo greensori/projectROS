@@ -103,7 +103,7 @@
 │
 ├── 3단계 cook and place (stm_unit_2) #2개의 heat unit이 있으며, 각각의heat unit에는 최대 7개의 메뉴가 들어갈수 있음
 │   ├── EXEC_TRIGGER: 1 - 14번 heat unit중 idle 상태가 있을것, heat unit 1번 혹은 2번중 한개가 앞면을 표시하고 있을것
-│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+│   ├── SENSOR_READ: M119 (타겟 핀: PA9, PA10, PB9, PC5)
 │   │
 │   └── COMMON_ACTIONS:
 │       |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
@@ -115,7 +115,7 @@
 │
 ├── 4단계 go to cook (stm_unit_2) 
 │   ├── EXEC_TRIGGER: NORMAL
-│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+│   ├── SENSOR_READ: M119 (타겟 핀: PA9, PA10, PB9, PC5)
 │   │
 │   └── BRANCH_RULES:
 │       ├── [CASE_A] IF (PC6: OPEN)
@@ -136,6 +136,18 @@
 │               |- M119
 │               `- 2분 대기
 │
+└── 5단계 cook and place (stm_unit_2) 
+    ├── EXEC_TRIGGER: 총조리시간이 11분 50초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 
+    ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+    │
+    └── COMMON_ACTIONS:
+        |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
+        |- G28 Y
+        |- G28 Z
+        |- M800 P0 S1
+        |- G1 Y1500 Z1500
+        |- G28 X
+        `- M800 P0 S0
 
 
 조리 프로세스
