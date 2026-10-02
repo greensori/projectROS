@@ -22,7 +22,7 @@
 │   ├── DISH_Transfer_X. tim3 ch3
 │   ├── DISH_Transfer_Y. tim3 ch4
 │   ├── rodless_unit_1. (시작리미트 PC4, 엔드리미트 PC5)
-
+│   │ 
 ├── (stm_2)
 │   ├── stm_unit_2. XYZ 이송 유닛
 │   │   ├── (테이블상단에 (stm1, PC7)입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
@@ -31,7 +31,15 @@
 │   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5)
 │   ├── Ignight_starter_1. tim3 ch3
 │   ├── Ignight_starter_2. tim3 ch4
-
+│   │ 
+├── (stm_3)
+│   ├── stm_unit_3. XYZ 이송 유닛. #로드리스 이송완료된 접시를 받아야 함
+│   │   ├── (테이블상단에 pd2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
+│   ├── Platter_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)
+│   ├── Platter_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5)
+│   ├── Platter_3. tim3 ch3
+│   ├── Finish_Converyer_1. tim3 ch4
 
 
 조리 프로세스
