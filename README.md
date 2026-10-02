@@ -10,6 +10,30 @@
 4. heat unit 조리시간을 기록하는 타이머(최대 2분, 하지만 초과할수 있음)
 
 
+자동화 설비 요약 
+이송유닛1. XYZ 이송 유닛 (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+오픈유닛1. tim3
+├── (stm_1)
+│   ├── stm_unit_1. XYZ 이송 유닛 (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
+│   ├── OPENER_1. tim3 ch1
+│   ├── OPENER_2. tim3 ch2
+│   ├── DISH_Transfer_X. tim3 ch3
+│   ├── DISH_Transfer_Y. tim3 ch4
+│   ├── rodless_unit_1. (시작리미트 PC4, 엔드리미트 PC5)
+
+├── (stm_2)
+│   ├── stm_unit_2. XYZ 이송 유닛
+│   │   ├── (테이블상단에 (stm1, PC7)입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
+│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)
+│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5)
+│   ├── Ignight_starter_1. tim3 ch3
+│   ├── Ignight_starter_2. tim3 ch4
+
+
+
 조리 프로세스
 ├── 1단계 pick and place (stm_unit_1)
 │   ├── EXEC_TRIGGER: 주문 대기열 존재 && 이전 공정 완료
