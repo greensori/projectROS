@@ -135,8 +135,8 @@ def get_stage4_flip_gcode_set1():
     """4단계 CASE_A (PC6: OPEN) - HP1 앞->뒤, HP2 뒤->앞"""
     return [
         "M800 P7 S1",
-        "M103 P0 S2000 F2000 D0.",
-        "M103 P1 S2000 F2000 D1.",
+        "M103 P0 S2000 F2000 D0",
+        "M103 P1 S2000 F2000 D1",
         "M800 P5 S0",
         "M119"
     ]
@@ -145,8 +145,8 @@ def get_stage4_flip_gcode_set2():
     """4단계 CASE_B (PC6: CLOSED) - HP1 뒤->앞, HP2 앞->뒤"""
     return [
         "M800 P5 S1",
-        "M103 P0 S2000 F2000 D1.",
-        "M103 P1 S2000 F2000 D0.",
+        "M103 P0 S2000 F2000 D1",
+        "M103 P1 S2000 F2000 D0",
         "M800 P7 S0",
         "M119"
     ]
@@ -204,6 +204,7 @@ table_orders = [{"count": 0, "amount": 0, "items": {name: 0 for name in MENU_NAM
 table_buttons = []
 table_order_detail_labels = []
 cancel_table_buttons = []
+custom_user_buttons = []
 
 portName = ['주문대기'] + ['-'] * NUM_SLOTS
 initStat = ['세트대기'] + ['-'] * NUM_SLOTS
@@ -692,7 +693,6 @@ def schedule_pipeline():
         return
 
     # [3순위] 5단계: cook and place (Finish)
-    # 조건: 총조리시간 11분 50초 초과 && pc6 센서가 idle(no trigger) 상태
     finished_candidates = []
     for s_id, info in heat_units.items():
         if info["status"] in ["cooking", "finished"] and info["total_cook_time"] >= TIMER_STAGE5_TRIGGER:
@@ -753,7 +753,6 @@ def _start_stage1_pick(item):
     sync_order_queue_ui()
     print(f"\n▶ [1단계 시작: Pick] T{item['table']} {item['name']}")
 
-    # RULE_A / RULE_B / RULE_C 분기 판정
     pd2_is_open = (sensor_states["stm1_pd2"] == "no trigger") or SIMULATION_MODE
     gcode_list = get_stage1_pick_gcode(item["name"], pd2_is_open=pd2_is_open)
 
@@ -770,9 +769,8 @@ def _start_stage1_pick(item):
         global is_unit1_busy
         is_unit1_busy = False
         
-        # PD2 CLOSED로 1초 대기만 수행된 경우 재시도
         if not pd2_is_open:
-            print(f"[1단계 대기] PD2 CLOSED 상태로 인한 1초 대기 완료 -> 재시도")
+            print("[1단계 대기] PD2 CLOSED 상태로 인한 1초 대기 완료 -> 재시도")
             schedule_pipeline()
             return
 
@@ -1051,6 +1049,10 @@ def cancel_pending_orders_by_table(table_num):
     sync_connection_info_ui()
     schedule_pipeline()
 
+def handle_custom_button(btn_idx):
+    """신규 추가된 사용자 정의 버튼 핸들러 (기능 확장용)"""
+    print(f"[사용자 버튼 {btn_idx + 1}] 클릭됨 (기능 미정)")
+
 def sync_connection_info_ui():
     table_overflow_stats = {}
     for item in overflow_orders:
@@ -1293,7 +1295,7 @@ chat_panel.grid(row=0, column=4, sticky="nsew", padx=5, pady=5)
 left_main_panel.columnconfigure(0, weight=1)
 left_main_panel.columnconfigure(1, weight=1)
 left_main_panel.columnconfigure(2, weight=1)
-left_main_panel.rowconfigure(5, weight=1)
+left_main_panel.rowconfigure(6, weight=1)
 
 topmenu = tk.Menu(App)
 filemenu = tk.Menu(topmenu, tearoff=0)
@@ -1451,10 +1453,32 @@ for i in range(NUM_TABLES):
     cancel_table_buttons.append(btn)
 
 # ----------------------------------------------------
-# 테이블 상세 내역 패널 (6개 열: 1~6번 테이블)
+# [신규 추가] 기능 미정 사용자 정의 버튼 행 (row=4, 6개 열)
+# ----------------------------------------------------
+custom_btn_frame = tk.Frame(left_main_panel, pady=2)
+custom_btn_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
+
+custom_user_buttons.clear()
+for i in range(NUM_TABLES):
+    custom_btn_frame.columnconfigure(i, weight=1)
+    btn = tk.Button(
+        custom_btn_frame,
+        text=f"기능 {i+1}\n(미지정)",
+        bg="#f8fafc",
+        fg="#475569",
+        font=("Arial", 8),
+        height=2,
+        relief="groove",
+        command=lambda idx=i: handle_custom_button(idx)
+    )
+    btn.grid(row=0, column=i, padx=2, sticky="ew")
+    custom_user_buttons.append(btn)
+
+# ----------------------------------------------------
+# 테이블 상세 내역 패널 (row 4 -> row 5 이동)
 # ----------------------------------------------------
 table_order_detail_frame = tk.LabelFrame(left_main_panel, text='정산 전 테이블별 주문 상세 내역', padx=5, pady=3)
-table_order_detail_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
+table_order_detail_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
 
 table_order_detail_labels.clear()
 for i in range(NUM_TABLES):
@@ -1477,9 +1501,11 @@ for i in range(NUM_TABLES):
     d_lbl.pack(fill="both", expand=True)
     table_order_detail_labels.append(d_lbl)
 
-# 콘솔 모니터링 프레임
+# ----------------------------------------------------
+# 콘솔 모니터링 프레임 (row 5 -> row 6 이동)
+# ----------------------------------------------------
 console_frame = tk.LabelFrame(left_main_panel, text='Console Monitoring', padx=5, pady=3)
-console_frame.grid(row=5, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
+console_frame.grid(row=6, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
 
 font_family = "Courier" if sys.platform == "darwin" else "Consolas"
 console_text = tk.Text(
