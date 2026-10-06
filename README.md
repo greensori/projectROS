@@ -17,29 +17,31 @@
 │   ├── stm_unit_1. tim2 XYZ 이송 유닛 (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
 │   │   ├── (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
 │   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
-│   ├── OPENER_1. tim3 ch1
-│   ├── OPENER_2. tim3 ch2
-│   ├── DISH_Transfer_X. tim3 ch3
-│   ├── DISH_Transfer_Y. tim3 ch4
+│   │   ├── PC10(파지유닛 1), PC11(파지유닛2), PC12(예압조정)
+│   ├── OPENER_1. tim3 ch1 (냉장고 1호 오픈)
+│   ├── OPENER_2. tim3 ch2 (냉장고 2호 오픈)
+│   ├── Ignight_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC9 으로 안전밸브 해제)
+│   ├── Ignight_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC3 으로 안전밸브 해제)
 │   ├── rodless_unit_1. (시작리미트 PC4, 엔드리미트 PC5)
 │   │ 
 ├── (stm_2)
 │   ├── stm_unit_2. tim2 XYZ 이송 유닛
-│   │   ├── (테이블상단에 (stm1, PC7)입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (테이블상단에 (stm1, PC7)입력센서 존재, G40과 연동하여 물건 탐지시까지 이동(도킹) 수행)
 │   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
 │   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)
 │   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5)
-│   ├── Ignight_starter_1. tim3 ch3
-│   ├── Ignight_starter_2. tim3 ch4
+│   ├── Platter_1. tim3 ch3 () (소스 분배. 파슬리)
+│   ├── Platter_2. tim3 ch4 () (소스 분배. 파프리카가루)
 │   │ 
 ├── (stm_3)
-│   ├── stm_unit_3. tim2 XYZ 이송 유닛. #로드리스 이송완료된 접시를 받아야 함
+│   ├── stm_unit_3. tim2 XYZ 이송 유닛. #컨베이어 이송완료된 접시를 받아야 함
 │   │   ├── (테이블상단에 pd2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
 │   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
-│   ├── Platter_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)
-│   ├── Platter_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5)
-│   ├── Platter_3. tim3 ch3
-│   ├── Finish_Converyer_1. tim3 ch4
+│   ├── Finish_Conveyer_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)
+│   ├── Finish_Conveyer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5)
+│   ├── DISH_Transfer_X. tim3 ch3 (접시장전유닛 1 하강)
+│   ├── DISH_Transfer_Y. tim3 ch4 (접시장전유닛 2 하강)
+
 
 
 조리 프로세스
@@ -174,18 +176,27 @@
 │               |- M119
 │               `- 2분 대기
 │
-└── 5단계 cook and place (stm_unit_2) 
+├── 5단계 cook and place (stm_unit_2) 
+│   ├── EXEC_TRIGGER: 총조리시간이 11분 50초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 
+│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+│   │
+│   └── COMMON_ACTIONS:
+│       |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
+│       |- G28 Y
+│       |- G28 Z
+│       |- M800 P0 S1
+│       |- G1 Y1500 Z1500
+│       |- G28 X
+│       `- M800 P0 S0     #공압해제 완료
+│
+└── 6단계 finish stage (stm_unit_3) 
     ├── EXEC_TRIGGER: 총조리시간이 11분 50초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 
-    ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
-    │
-    └── COMMON_ACTIONS:
-        |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
-        |- G28 Y
-        |- G28 Z
-        |- M800 P0 S1
-        |- G1 Y1500 Z1500
-        |- G28 X
-        `- M800 P0 S0
+    ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6), 정기적으로 작동
+    │   
+    └── COMMON_ACTIONS: 
+  
+
+
 
 
 조리 프로세스 상태 머신 및 파이썬 매핑 명세서
