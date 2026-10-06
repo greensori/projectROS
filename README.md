@@ -10,6 +10,40 @@
 4. heat unit 조리시간을 기록하는 타이머(최대 2분, 하지만 초과할수 있음)
 
 
+자동화 설비 요약 
+이송유닛1. XYZ 이송 유닛 (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+오픈유닛1. tim3
+├── (stm_1)
+│   ├── stm_unit_1. tim2 XYZ 이송 유닛 (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── PC10(파지유닛 1), PC11(파지유닛2), PC12(예압조정)
+│   ├── OPENER_1. tim3 ch1 (냉장고 1호 오픈)
+│   ├── OPENER_2. tim3 ch2 (냉장고 2호 오픈)
+│   ├── Ignight_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC9 으로 안전밸브 해제)
+│   ├── Ignight_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC3 으로 안전밸브 해제)
+│   ├── rodless_unit_1. (시작리미트 PC4, 엔드리미트 PC5)
+│   │ 
+├── (stm_2)
+│   ├── stm_unit_2. tim2 XYZ 이송 유닛
+│   │   ├── (테이블상단에 (stm1, PC7)입력센서 존재, G40과 연동하여 물건 탐지시까지 이동(도킹) 수행)
+│   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
+│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)(정방향 공압(PA4, 역방향 PC2)
+│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5) (정방향 공압(PB2, 역방향 PC3)
+│   ├── Platter_1. tim3 ch3 () (소스 분배. 파슬리)
+│   ├── Platter_2. tim3 ch4 () (소스 분배. 파프리카가루)
+│   │ 
+├── (stm_3)
+│   ├── stm_unit_3. tim2 XYZ 이송 유닛. #컨베이어 이송완료된 접시를 받아야 함
+│   │   ├── (테이블상단에 pd2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
+│   ├── Finish_Conveyer_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)
+│   ├── Finish_Conveyer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5)
+│   ├── DISH_Transfer_X. tim3 ch3 (접시장전유닛 1 하강)
+│   ├── DISH_Transfer_Y. tim3 ch4 (접시장전유닛 2 하강)
+
+
+
 조리 프로세스
 ├── 1단계 pick and place (stm_unit_1)
 │   ├── EXEC_TRIGGER: 주문 대기열 존재 && 이전 공정 완료
@@ -50,11 +84,14 @@
 │   │           `- G1 x3600                     # 축이동
 │   │ 
 │   ├── COMMON_ACTIONS:
-│   │   |- G1 X200 (조정 이동)
+│   │   |- G38 X200 F200 (센서 탐지시(PC6)까지 이동)
+│   │   |- G92 X0                # x축 재설정
+│   │   |- G1 X-20 F1000         # x축 조정이동
+│   │   |- G90                   # 절대 좌표 복귀
 │   │   |- G1 z2000 
 │   │   |- G1 y2000
 │   │   |- G1 z200  
-│   │   |- G40 (z축 센서 탐지시 까지 이동, 냉장고 쪽)
+│   │   |- G40 (z축 센서 탐지시(PD2) 까지 이동, 냉장고 쪽)
 │   │   |- M800 P4 S1 (공압유닛 작동)
 │   │   |- M800 P5 S1 (공압유닛 작동)
 │   │   `- G28 z y
@@ -62,12 +99,12 @@
 │   └── BRANCH_RULES:
 │       ├── [RULE_A] IF (PD2: OPEN && 주문메뉴('수블라키', '투움')
 │       │   └── ACTION_SEQUENCE:
-│       │       |- M103 P0 S2000 F2000 D1   # 냉장고 닫기
+│       │       |- M128 P0   # 냉장고 닫기
 │       │       `- M119                     # 머신 상태 조회
 │       │    
 │       └── [RULE_B] IF (PD2: OPEN && 주문메뉴('룰라', '비프샤슬릭', '치킨샤슬릭')
 │          └── ACTION_SEQUENCE:
-│               |- M103 P1 S2000 F2000 D1   # 냉장고 닫기
+│               |- M128 P1   # 냉장고 닫기
 │               `- M119                     # 머신 상태 조회
 │
 ├── 2-1단계 unit change (stm_unit_2)
@@ -77,8 +114,11 @@
 │   └── BRANCH_RULES:
 │       ├── [RULE_A] IF (PC6: OPEN)
 │       │   └── ACTION_SEQUENCE:
-│       │       |- G1 X()           # stm보드_1 에서 x축의 좌표를 받아서 그 좌표 +2500만큼 거리를 이동
-│       │       `- G38              # x축 센서탐지(PC6)까지 이동
+│       │       |- G1 X()                # stm보드_1 에서 x축의 좌표를 받아서 그 좌표 +2500만큼 거리를 이동
+│       │       |- G38 X200 F200              # x축 센서탐지(PC6)까지 이동
+│       │       |- G92 X0                # x축 재설정
+│       │       |- G1 X-20 F1000             # x축 조정이동
+│       │       `- G90                   # 절대 좌표 복귀
 │       │    
 │       └── [RULE_B] IF (PC6: CLOSED)
 │           └── ACTION_SEQUENCE:
@@ -86,7 +126,7 @@
 │
 ├── 2-2단계 unit change (stm_unit_1)
 │   └── COMMON_ACTIONS:
-│       `- G40 (z축 센서(PC6) 탐지시 까지 이동, 이송유닛 쪽)
+│       `- G40 (z축 센서(PC7) 탐지시 까지 이동, 이송유닛 쪽)
 │
 ├── 2-3단계 unit change (stm_unit_2)
 │   └── COMMON_ACTIONS:
@@ -136,18 +176,27 @@
 │               |- M119
 │               `- 2분 대기
 │
-└── 5단계 cook and place (stm_unit_2) 
+├── 5단계 cook and place (stm_unit_2) 
+│   ├── EXEC_TRIGGER: 총조리시간이 11분 50초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 
+│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+│   │
+│   └── COMMON_ACTIONS:
+│       |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
+│       |- G28 Y
+│       |- G28 Z
+│       |- M800 P0 S1
+│       |- G1 Y1500 Z1500
+│       |- G28 X
+│       `- M800 P0 S0     #공압해제 완료
+│
+└── 6단계 finish stage (stm_unit_3) 
     ├── EXEC_TRIGGER: 총조리시간이 11분 50초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 
-    ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
-    │
-    └── COMMON_ACTIONS:
-        |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
-        |- G28 Y
-        |- G28 Z
-        |- M800 P0 S1
-        |- G1 Y1500 Z1500
-        |- G28 X
-        `- M800 P0 S0
+    ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6), 정기적으로 작동
+    │   
+    └── COMMON_ACTIONS: 
+  
+
+
 
 
 조리 프로세스 상태 머신 및 파이썬 매핑 명세서
