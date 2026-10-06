@@ -28,8 +28,8 @@
 │   ├── stm_unit_2. tim2 XYZ 이송 유닛
 │   │   ├── (테이블상단에 (stm1, PC7)입력센서 존재, G40과 연동하여 물건 탐지시까지 이동(도킹) 수행)
 │   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
-│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)
-│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5)
+│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9)(정방향 공압(PA4, 역방향 PC2)
+│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5) (정방향 공압(PB2, 역방향 PC3)
 │   ├── Platter_1. tim3 ch3 () (소스 분배. 파슬리)
 │   ├── Platter_2. tim3 ch4 () (소스 분배. 파프리카가루)
 │   │ 
