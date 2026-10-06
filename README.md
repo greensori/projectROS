@@ -20,8 +20,8 @@
 │   │   ├── PC10(파지유닛 1), PC11(파지유닛2), PC12(예압조정)
 │   ├── OPENER_1. tim3 ch1 (냉장고 1호 오픈)
 │   ├── OPENER_2. tim3 ch2 (냉장고 2호 오픈)
-│   ├── Ignight_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC9 으로 안전밸브 해제)
-│   ├── Ignight_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC3 으로 안전밸브 해제)
+│   ├── Ignite_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC9 으로 안전밸브 해제)
+│   ├── Ignite_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC3 으로 안전밸브 해제)
 │   ├── rodless_unit_1. (시작리미트 PC4, 엔드리미트 PC5)
 │   │ 
 ├── (stm_2)
