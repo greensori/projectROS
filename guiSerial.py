@@ -46,16 +46,13 @@ dish_stock = {
 }
 
 # ----------------------------------------------------
-# [변수 1 & 2 관리] 주문열 카운터 및 완료 배출 서빙 배치 관리
+# [변수 1 & 2 관리] 주문열 카운터 및 배칭 관리
 # ----------------------------------------------------
 global_order_seq = 1  # 1 ~ 999 순환
 
-# active_orders: 현재 조리 파이프라인 진행 중인 주문 항목들
 active_orders = []
 overflow_orders = []
 
-# serving_plates: 6단계 접시 담기 배칭 큐
-# 구조: {"table": int, "order_seq": int, "target_count": int, "loaded_count": int, "status": "preparing"|"loading"|"ready_deliver"}
 current_serving_plate = None
 
 # ----------------------------------------------------
@@ -67,13 +64,12 @@ def get_stage1_pick_gcode(menu_name, pd2_is_open=True):
         return ["G4 P1000", "M119"]
 
     gcodes = []
-    # 냉장고 오픈 분기
+    # 냉장고 도어 오픈
     if menu_name in ["수블라키", "투움"]:
         gcodes.extend(["M103 P0 S2000 F2000 D0", "G28"])
     else:
         gcodes.extend(["M103 P1 S2000 F2000 D0", "G28"])
 
-    # 메뉴별 축 이동 X좌표
     x_positions = {
         "수블라키": 2000,
         "투움": 2400,
@@ -85,20 +81,20 @@ def get_stage1_pick_gcode(menu_name, pd2_is_open=True):
 
     gcodes.extend([
         f"G1 X{x_val}",
-        "G38 X200 F200",     # PC6 센서 탐지까지 이동
-        "G92 X0",            # X축 재설정
-        "G1 X-20 F1000",     # X축 조정 이동
-        "G90",               # 절대 좌표 복귀
+        "G38 X200 F200",     # PC6 센서 탐색
+        "G92 X0",            # 센서 감지점 원점 세팅
+        "G1 X-20 F1000",     # 안전 마진 후퇴
+        "G90",
         "G1 Z2000",
         "G1 Y2000",
         "G1 Z200",
-        "G40",               # PD2 센서 탐지까지 이동
+        "G40",               # PD2 센서 감지 프로빙 하강
         "M800 P4 S1",        # 공압 파지 ON
         "M800 P5 S1",
         "G28 Z Y"
     ])
 
-    # 냉장고 닫기 분기
+    # 냉장고 도어 닫기
     if menu_name in ["수블라키", "투움"]:
         gcodes.extend(["M128 P0", "M119"])
     else:
@@ -120,7 +116,7 @@ def get_stage2_1_approach_gcode(b1_x, pc6_is_open=True):
     else:
         return ["G4 P1000", "M119"]
 
-GCODE_STAGE2_2_UNIT1_DOCK = ["G40"] # z축 센서 PC7 탐지까지
+GCODE_STAGE2_2_UNIT1_DOCK = ["G40"]
 GCODE_STAGE2_3_UNIT2_GRIP = ["M800 P0 S1", "G4 P1000"]
 GCODE_STAGE2_4_UNIT1_RELEASE = ["M800 P0 S0", "M800 P1 S0", "G4 P2000", "G28"]
 
@@ -169,17 +165,13 @@ def get_stage5_finish_gcode(slot_id):
         "M800 P0 S0"
     ]
 
-def get_stage6_1_plate_feed_gcode():
+def get_stage6_1_plate_feed_gcode(feeder_channel):
     """6-1단계: 접시 공급 및 수신 컨베이어 가동 (stm_unit_3)"""
-    # [변수 3] 기반 장전 유닛 선택
-    if dish_stock["tim3_ch3"] > 0:
-        dish_stock["tim3_ch3"] -= 1
+    if feeder_channel == 0:
         p_cmd = "G39 P0 S20000 F400"
-    elif dish_stock["tim3_ch4"] > 0:
-        dish_stock["tim3_ch4"] -= 1
+    elif feeder_channel == 1:
         p_cmd = "G39 P1 S20000 F400"
     else:
-        print("[!] 경고: 접시 장전 수량이 완전히 소진되었습니다!")
         p_cmd = "G4 P1000"
 
     return [
@@ -189,7 +181,7 @@ def get_stage6_1_plate_feed_gcode():
     ]
 
 def get_stage6_2_plate_ready_gcode():
-    """6-2단계: 접시 수령 완료 및 파이썬 조리 완료 대기 위치로 격리 (stm_unit_3)"""
+    """6-2단계: 접시 수령 완료 및 조리 완료 대기 위치 격리 (stm_unit_3)"""
     return [
         "G1 Z200",
         "M119"
@@ -197,7 +189,6 @@ def get_stage6_2_plate_ready_gcode():
 
 def get_stage6_3_deliver_gcode(table_num):
     """6-3단계: 완성 접시 테이블별 컨베이어 이송 배출 (stm_unit_3)"""
-    # 테이블별 이동 거리 매핑 (1테이블: 1500, 2테이블: 3000, 3테이블: 4500 ...)
     step_distance = table_num * 1500
     return [
         "G1 X2000",
@@ -212,16 +203,15 @@ def get_stage6_3_deliver_gcode(table_num):
 plate_current_side = {1: "front", 2: "back"}
 plate_flipping_lock = {1: False, 2: False}
 
-# 14개 가상 조리 슬롯 및 4개 타이머
 heat_units = {
     i: {
-        "status": "idle",       # idle, reserved, cooking, finished
+        "status": "idle",
         "plate_id": 1 if i <= 7 else 2,
-        "order": None,          # 주문 객체 매핑
-        "total_cook_time": 0.0,      # 타이머 1: 총 조리시간 (상한 12분)
-        "front_cook_time": 0.0,      # 타이머 2: 앞면 조리시간 (상한 6분)
-        "back_cook_time": 0.0,       # 타이머 3: 뒷면 조리시간 (상한 6분)
-        "heat_unit_stay_time": 0.0,  # 타이머 4: 위상 체류시간 (상한 2분)
+        "order": None,
+        "total_cook_time": 0.0,
+        "front_cook_time": 0.0,
+        "back_cook_time": 0.0,
+        "heat_unit_stay_time": 0.0,
         "last_tick": 0.0
     }
     for i in range(1, NUM_SLOTS + 1)
@@ -230,13 +220,10 @@ heat_units = {
 plate_phase_timer = {1: 0.0, 2: 0.0}
 plate_last_tick = time.time()
 
-# 3개 STM 보드 센서 상태 통합 관리
 sensor_states = {
-    # stm_1
     "stm1_pd2": "no trigger",
     "stm1_pc7": "no trigger",
     "stm1_pc6": "no trigger",
-    # stm_2
     "stm2_pd2": "no trigger",
     "stm2_pc6": "no trigger",
     "stm2_pc7": "no trigger",
@@ -244,13 +231,11 @@ sensor_states = {
     "stm2_pa10": "no trigger",
     "stm2_pb9": "no trigger",
     "stm2_pc5": "no trigger",
-    # stm_3
     "stm3_pd2": "no trigger",
     "stm3_pc6": "no trigger",
     "stm3_pc7": "no trigger"
 }
 
-# 하드웨어 포트 매핑 (1: stm1, 2: stm2, 3: stm3)
 board_slot_map = {1: 1, 2: 2, 3: 3}
 portlist = [None] * (NUM_SLOTS + 1)
 port_names = [''] * (NUM_SLOTS + 1)
@@ -259,14 +244,12 @@ rx_buffers = [''] * (NUM_SLOTS + 1)
 slot_queues = {i: deque() for i in range(1, NUM_SLOTS + 1)}
 slot_current_job = {i: None for i in range(1, NUM_SLOTS + 1)}
 
-# 유닛 점유 플래그
 is_unit1_busy = False
 is_unit2_busy = False
 is_unit3_busy = False
 unit2_at_prepick_pos = True
-unit3_stage6_status = "idle"  # idle, plate_fed, waiting_dish, delivering
+unit3_stage6_status = "idle"
 
-# UI용 데이터
 menu_counter = [0] * len(MENU_NAMES)
 menu_buttons = []
 table_orders = [{"count": 0, "amount": 0, "items": {name: 0 for name in MENU_NAMES}} for _ in range(NUM_TABLES)]
@@ -460,7 +443,6 @@ def autoDetectAndConnect():
                 portlist[i] = None
             c6Label[i].configure(text='DC', foreground='gray')
 
-    # 기본 슬롯 고정 (stm_1: 1번, stm_2: 2번, stm_3: 3번)
     if 1 not in board_slot_map: board_slot_map[1] = 1
     if 2 not in board_slot_map: board_slot_map[2] = 2
     if 3 not in board_slot_map: board_slot_map[3] = 3
@@ -506,12 +488,10 @@ def serialTester():
 
                                 clean_line = line.replace(" ", "").upper()
 
-                                # 보드 ID 자동 매핑 판정
                                 for b_id in [1, 2, 3]:
                                     if f"READY_{b_id}" in clean_line or f"UNIT{b_id}" in clean_line:
                                         board_slot_map[b_id] = i
 
-                                # 센서 파싱 루틴
                                 def parse_pin(pin_name, key_name):
                                     if f"{pin_name}:TRIGGERED" in clean_line or f"{pin_name}:CLOSED" in clean_line:
                                         sensor_states[key_name] = "triggered"
@@ -678,16 +658,6 @@ def get_empty_heat_slot_in_front_plate():
     return None
 
 def schedule_pipeline():
-    """
-    통합 오케스트레이터:
-    - 6-1단계: 총조리시간 11분 초과 요리 감지 시 접시 사전 급송 (stm_unit_3)
-    - 1순위: 4단계 위상 회전 (2분 체류주기 도달 시 PC6 판정 회전)
-    - 2순위: 1단계 pick and place (독립 구동)
-    - 3순위: 5단계 cook and place 배출 (11분 50초 초과 시 stm_unit_2 배출)
-    - 4순위: 6-2 ~ 6-3단계 접시 담기 및 컨베이어 배출 연동
-    - 5순위: 2단계 unit change (11분 30초 초과 요리 없을 때 인계)
-    - 6순위: 3단계 cook and place (앞면 슬롯 & 20초 이상 확보 슬롯 안착)
-    """
     global is_unit1_busy, is_unit2_busy, is_unit3_busy
 
     while len(active_orders) < NUM_SLOTS and overflow_orders:
@@ -706,14 +676,14 @@ def schedule_pipeline():
                 _run_stage6_1_plate_feed()
                 break
 
-    # [1순위] 4단계: 위상 변화 (최상위 우선순위)
+    # [1순위] 4단계: 위상 변화
     if not is_unit2_busy and not (plate_flipping_lock[1] or plate_flipping_lock[2]):
         if plate_phase_timer[1] >= TIMER_UNIT_STAY_MAX or plate_phase_timer[2] >= TIMER_UNIT_STAY_MAX:
             print("[우선순위 1: 4단계 위상변화] 2분 주기 도달 -> Set1/Set2 위상 회전")
             rotate_both_plates_synchronized()
             return
 
-    # [2순위] 1단계: pick and place (stm_unit_1 독립 구동)
+    # [2순위] 1단계: pick and place (stm_unit_1)
     if not is_unit1_busy:
         c1_pending = None
         for item in active_orders:
@@ -727,7 +697,7 @@ def schedule_pipeline():
         if c1_pending and pc7_ok and pd2_ok:
             _start_stage1_pick(c1_pending)
 
-    # [3순위] 5단계: 배출 (11분 50초 초과 시 stm_unit_2)
+    # [3순위] 5단계: 배출 (stm_unit_2)
     if not is_unit2_busy:
         finished_candidates = []
         for s_id, info in heat_units.items():
@@ -933,7 +903,6 @@ def rotate_both_plates_synchronized():
         now = time.time()
         for s in range(1, NUM_SLOTS + 1):
             if heat_units[s]["status"] == "cooking":
-                # 4번 타이머: heat unit 체류시간 리셋
                 heat_units[s]["heat_unit_stay_time"] = 0.0
                 heat_units[s]["last_tick"] = now
 
@@ -967,7 +936,6 @@ def _run_stage5_finish(slot_id):
         is_unit2_busy = False
         unit2_at_prepick_pos = True
 
-        # 슬롯 데이터 초기화
         info["status"] = "idle"
         info["order"] = None
         info["total_cook_time"] = 0.0
@@ -977,7 +945,6 @@ def _run_stage5_finish(slot_id):
 
         if target_order:
             target_order["status"] = "6단계:접시적재"
-            # [변수 2] 접시 담기 배칭 루틴으로 요리 전달
             _handle_stage6_plate_batching(target_order)
 
         sync_order_queue_ui()
@@ -996,8 +963,20 @@ def _run_stage6_1_plate_feed():
     unit3_stage6_status = "plate_fed"
     unit3_slot = board_slot_map.get(3, 3)
 
-    print("▶ [6-1단계] 접시장전유닛 하강 및 수신 컨베이어 개시 (stm_unit_3)")
-    gcodes = get_stage6_1_plate_feed_gcode()
+    # 채널 선정 및 안전 차감
+    if dish_stock["tim3_ch3"] > 0:
+        feeder_ch = 0
+        dish_stock["tim3_ch3"] -= 1
+        print(f"▶ [6-1단계] 1번 접시장전유닛(CH3) 사용 (남은 수량: {dish_stock['tim3_ch3']})")
+    elif dish_stock["tim3_ch4"] > 0:
+        feeder_ch = 1
+        dish_stock["tim3_ch4"] -= 1
+        print(f"▶ [6-1단계] 2번 접시장전유닛(CH4) 사용 (남은 수량: {dish_stock['tim3_ch4']})")
+    else:
+        feeder_ch = -1
+        print("[!] 경고: 접시 장전 수량이 완전히 소진되었습니다!")
+
+    gcodes = get_stage6_1_plate_feed_gcode(feeder_ch)
 
     def _done_6_1():
         global is_unit3_busy
@@ -1025,21 +1004,13 @@ def _run_stage6_2_plate_ready():
     execute_gcode_sequence(unit3_slot, gcodes, on_done=_done_6_2)
 
 def _handle_stage6_plate_batching(completed_order):
-    """
-    [변수 2] 규칙:
-    - 동일 주문열(order_seq)인 경우 최대 3개까지 단일 접시에 적재
-    - 누적 수량이 3개에 도달하거나, 해당 주문열의 남은 조리물이 없을 때 6-3단계(이송) 트리거
-    - 다른 주문열의 요리가 도착하면 기존 접시 즉시 배출 후 새 접시 할당
-    """
     global current_serving_plate
 
     t_num = completed_order["table"]
     seq = completed_order["order_seq"]
 
-    # 현재 대기 중인 접시가 없거나, 주문열이 변경된 경우 새 접시 상태 초기화
     if current_serving_plate is None or current_serving_plate["order_seq"] != seq:
         if current_serving_plate is not None and current_serving_plate["loaded_count"] > 0:
-            # 이전 주문열의 접시가 남아있다면 즉시 내보냄
             _trigger_stage6_3_deliver(current_serving_plate["table"])
 
         current_serving_plate = {
@@ -1054,18 +1025,15 @@ def _handle_stage6_plate_batching(completed_order):
     if completed_order in active_orders:
         active_orders.remove(completed_order)
 
-    # 같은 주문열의 잔여 조리물 개수 파악
     same_seq_remaining = sum(
         1 for o in active_orders if o["table"] == t_num and o["order_seq"] == seq
     )
 
-    # 조건: 3개가 가득 찼거나, 더 이상 해당 주문열에 남은 조리물이 없는 경우 종결 및 배출
     if current_serving_plate["loaded_count"] >= 3 or same_seq_remaining == 0:
         print(f"▶ [6단계 배치 충족] T{t_num} Q{seq} 접시 완성 ({current_serving_plate['loaded_count']}개 적재) -> 배출 개시")
         _trigger_stage6_3_deliver(t_num)
 
 def _trigger_stage6_3_deliver(table_num):
-    """6-3단계: 컨베이어 최종 배출"""
     global is_unit3_busy, unit3_stage6_status, current_serving_plate
     unit3_slot = board_slot_map.get(3, 3)
     is_unit3_busy = True
@@ -1108,12 +1076,9 @@ def process_cooking_timer_tick():
             p_id = info["plate_id"]
             side = plate_current_side[p_id]
 
-            # 1번: 총 조리시간 (최대 12분, 초과 허용)
             info["total_cook_time"] += dt
-            # 4번: Heat unit 위상 체류시간 (최대 2분, 초과 허용)
             info["heat_unit_stay_time"] += dt
 
-            # 2, 3번: 앞/뒷면 조리시간 (각 최대 6분, 초과 허용)
             if side == "front":
                 info["front_cook_time"] += dt
             else:
@@ -1129,18 +1094,13 @@ def process_cooking_timer_tick():
 # 10. 주문 접수 및 주문열(변수 1) 관리
 # ----------------------------------------------------
 def handle_table_button(t_idx):
-    """
-    [변수 1] 주문 처리 규칙:
-    - (테이블번호, 주문열 1~999, 주문 메뉴 목록)
-    - 동일 테이블이라도 버튼이 따로 눌리면 주문열이 분리되어 독립 조리 및 배칭
-    """
     global menu_counter, table_orders, global_order_seq
     current_selected_sum = sum(menu_counter)
     t_num = t_idx + 1
 
     if current_selected_sum > 0:
         assigned_seq = global_order_seq
-        global_order_seq = (global_order_seq % 999) + 1  # 1~999 순환
+        global_order_seq = (global_order_seq % 999) + 1
 
         added_amount = current_selected_sum * MENU_PRICE
         table_orders[t_idx]["count"] += current_selected_sum
@@ -1158,7 +1118,7 @@ def handle_table_button(t_idx):
             for _ in range(count):
                 ordered_items.append({
                     "table": t_num,
-                    "order_seq": assigned_seq,      # 변수 1: 고유 주문열
+                    "order_seq": assigned_seq,
                     "name": MENU_NAMES[m_idx],
                     "status": "대기",
                     "total_order": current_selected_sum,
@@ -1178,7 +1138,6 @@ def handle_table_button(t_idx):
         sync_connection_info_ui()
         schedule_pipeline()
     else:
-        # 0개 선택 상태에서 누르면 정산 완료 처리
         if table_orders[t_idx]["count"] > 0 or table_orders[t_idx]["amount"] > 0:
             print(f"[{t_num}번 테이블 정산 완료]")
             table_orders[t_idx]["count"] = 0
@@ -1237,6 +1196,7 @@ def handle_custom_button(btn_idx):
         print("[접시 보충] CH3, CH4 수량을 20개로 리셋합니다.")
         dish_stock["tim3_ch3"] = 20
         dish_stock["tim3_ch4"] = 20
+        update_system_statusbar()
     else:
         print(f"[사용자 버튼 {btn_idx + 1}] 대기 상태")
 
@@ -1578,7 +1538,7 @@ for i in range(NUM_TABLES):
     btn.grid(row=0, column=i, padx=2, sticky="ew")
     cancel_table_buttons.append(btn)
 
-# 사용자 정의 제어 버튼 프레임
+# 사용자 정의 제어 버튼 프레임 (row=4)
 custom_btn_frame = tk.Frame(left_main_panel, pady=2)
 custom_btn_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=2)
 
@@ -1599,7 +1559,7 @@ for i in range(NUM_TABLES):
     btn.grid(row=0, column=i, padx=2, sticky="ew")
     custom_user_buttons.append(btn)
 
-# 테이블 상세 내역 프레임
+# 테이블 상세 내역 프레임 (row=5)
 table_order_detail_frame = tk.LabelFrame(left_main_panel, text='정산 전 테이블별 주문 상세 내역', padx=5, pady=3)
 table_order_detail_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
 
@@ -1624,7 +1584,7 @@ for i in range(NUM_TABLES):
     d_lbl.pack(fill="both", expand=True)
     table_order_detail_labels.append(d_lbl)
 
-# 콘솔 모니터링 프레임
+# 콘솔 모니터링 프레임 (row=6)
 console_frame = tk.LabelFrame(left_main_panel, text='Console Monitoring', padx=5, pady=3)
 console_frame.grid(row=6, column=0, columnspan=3, padx=5, pady=3, sticky="nsew")
 
@@ -1679,7 +1639,7 @@ for section_idx, title in enumerate(analysis_titles):
         btn = tk.Button(sec_lf, text=f"S{section_idx+1}-P{b_idx+1}\n[OK]", font=("Arial", 8), bg="#f1f5f9")
         btn.grid(row=b_idx // 3, column=b_idx % 3, padx=2, pady=2, sticky="nsew")
 
-# AI 어시스턴트 패널
+# 시스템 상태 패널
 chat_panel.rowconfigure(0, weight=1)
 chat_panel.columnconfigure(0, weight=1)
 
