@@ -55,6 +55,9 @@ overflow_orders = []
 
 current_serving_plate = None
 
+# STM1 유닛 상태 모니터링 변수 (Vision #1 패널 표시용)
+stm1_pos = {"X": 0, "Y": 0, "Z": 0}
+
 # ----------------------------------------------------
 # 1. 1~6단계 G-code 생성 함수군
 # ----------------------------------------------------
@@ -64,7 +67,6 @@ def get_stage1_pick_gcode(menu_name, pd2_is_open=True):
         return ["G4 P1000", "M119"]
 
     gcodes = []
-    # 냉장고 도어 오픈
     if menu_name in ["수블라키", "투움"]:
         gcodes.extend(["M103 P0 S2000 F2000 D0", "G28"])
     else:
@@ -94,7 +96,6 @@ def get_stage1_pick_gcode(menu_name, pd2_is_open=True):
         "G28 Z Y"
     ])
 
-    # 냉장고 도어 닫기
     if menu_name in ["수블라키", "투움"]:
         gcodes.extend(["M128 P0", "M119"])
     else:
@@ -220,10 +221,14 @@ heat_units = {
 plate_phase_timer = {1: 0.0, 2: 0.0}
 plate_last_tick = time.time()
 
+# 센서 상태 통합 관리 (STM1 요구 센서 포함)
 sensor_states = {
     "stm1_pd2": "no trigger",
     "stm1_pc7": "no trigger",
     "stm1_pc6": "no trigger",
+    "stm1_pa11": "no trigger",
+    "stm1_pa12": "no trigger",
+    "stm1_pc4": "no trigger",
     "stm2_pd2": "no trigger",
     "stm2_pc6": "no trigger",
     "stm2_pc7": "no trigger",
@@ -271,6 +276,8 @@ LF3cmos_value = ['Status:??'] + [f'NOTIN{i}' for i in range(1, NUM_SLOTS + 1)]
 LF3cmos_entry = ['Command'] + [f'Enter{i}' for i in range(1, NUM_SLOTS + 1)]
 
 c0Label, c1Label, c2Label, c3Label, c4Label, c5Label, c6Label, c7Entry = [], [], [], [], [], [], [], []
+
+analysis_buttons = [[], [], []]
 
 is_running = True
 orig_stdout = sys.stdout
@@ -409,8 +416,62 @@ def notify_slot_ok_received(slot_id):
             App.after(5, lambda: _send_job_line(slot_id))
 
 # ----------------------------------------------------
-# 5. 시리얼 통신 인터페이스
+# 5. 시리얼 통신 인터페이스 & STM1 데이터 파싱
 # ----------------------------------------------------
+def update_vision1_display():
+    """STM1 보드에서 데이터가 왔을 때만 Vision #1 패널의 9개 버튼 텍스트와 색상을 갱신"""
+    if len(analysis_buttons[0]) < 9:
+        return
+
+    btns = analysis_buttons[0]
+
+    # [1행] TIM2 3축 실시간 좌표 (X, Y, Z)
+    btns[0].configure(text=f"X 좌표\n[{stm1_pos['X']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[1].configure(text=f"Y 좌표\n[{stm1_pos['Y']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[2].configure(text=f"Z 좌표\n[{stm1_pos['Z']}]", bg="#e0f2fe", fg="#0369a1")
+
+    # [2행] 핵심 센서 3종 (PD2, PC6, PC7)
+    s_pd2 = sensor_states.get("stm1_pd2", "no trigger")
+    s_pc6 = sensor_states.get("stm1_pc6", "no trigger")
+    s_pc7 = sensor_states.get("stm1_pc7", "no trigger")
+
+    btns[3].configure(
+        text=f"PD2(Z_PROBE)\n[{'TRIG' if s_pd2 == 'triggered' else 'OPEN'}]",
+        bg="#dcfce7" if s_pd2 == "triggered" else "#f1f5f9",
+        fg="#15803d" if s_pd2 == "triggered" else "#475569"
+    )
+    btns[4].configure(
+        text=f"PC6(X_REF)\n[{'TRIG' if s_pc6 == 'triggered' else 'OPEN'}]",
+        bg="#dcfce7" if s_pc6 == "triggered" else "#f1f5f9",
+        fg="#15803d" if s_pc6 == "triggered" else "#475569"
+    )
+    btns[5].configure(
+        text=f"PC7(UNIT_SYNC)\n[{'TRIG' if s_pc7 == 'triggered' else 'OPEN'}]",
+        bg="#ffedd5" if s_pc7 == "triggered" else "#f1f5f9",
+        fg="#c2410c" if s_pc7 == "triggered" else "#475569"
+    )
+
+    # [3행] TIM3 관련 센서 3종 (PA11, PA12, PC4)
+    s_pa11 = sensor_states.get("stm1_pa11", "no trigger")
+    s_pa12 = sensor_states.get("stm1_pa12", "no trigger")
+    s_pc4 = sensor_states.get("stm1_pc4", "no trigger")
+
+    btns[6].configure(
+        text=f"PA11(CH3_LIM)\n[{'TRIG' if s_pa11 == 'triggered' else 'OPEN'}]",
+        bg="#fef3c7" if s_pa11 == "triggered" else "#f1f5f9",
+        fg="#b45309" if s_pa11 == "triggered" else "#475569"
+    )
+    btns[7].configure(
+        text=f"PA12(CH4_LIM)\n[{'TRIG' if s_pa12 == 'triggered' else 'OPEN'}]",
+        bg="#fef3c7" if s_pa12 == "triggered" else "#f1f5f9",
+        fg="#b45309" if s_pa12 == "triggered" else "#475569"
+    )
+    btns[8].configure(
+        text=f"PC4(RODLESS1)\n[{'TRIG' if s_pc4 == 'triggered' else 'OPEN'}]",
+        bg="#ede9fe" if s_pc4 == "triggered" else "#f1f5f9",
+        fg="#6d28d9" if s_pc4 == "triggered" else "#475569"
+    )
+
 def autoDetectAndConnect():
     global portlist, port_names, board_slot_map
     board_slot_map.clear()
@@ -461,7 +522,7 @@ def serialDisconnectAll():
             c6Label[i].configure(text="DC", foreground="black")
 
 def serialTester():
-    global portlist, rx_buffers, board_slot_map, sensor_states
+    global portlist, rx_buffers, board_slot_map, sensor_states, stm1_pos
     if not is_running:
         return
 
@@ -495,13 +556,73 @@ def serialTester():
                                 def parse_pin(pin_name, key_name):
                                     if f"{pin_name}:TRIGGERED" in clean_line or f"{pin_name}:CLOSED" in clean_line:
                                         sensor_states[key_name] = "triggered"
+                                        return True
                                     elif f"{pin_name}:OPEN" in clean_line or f"{pin_name}:NOTRIGGER" in clean_line:
                                         sensor_states[key_name] = "no trigger"
+                                        return True
+                                    return False
 
+                                # STM1 데이터 파싱 및 Vision #1 즉시 반영
                                 if i == board_slot_map.get(1, 1):
-                                    parse_pin("PD2", "stm1_pd2")
-                                    parse_pin("PC7", "stm1_pc7")
-                                    parse_pin("PC6", "stm1_pc6")
+                                    stm1_updated = False
+
+                                    # 1. 센서 데이터 파싱
+                                    if parse_pin("PD2", "stm1_pd2"): stm1_updated = True
+                                    if parse_pin("PC7", "stm1_pc7"): stm1_updated = True
+                                    if parse_pin("PC6", "stm1_pc6"): stm1_updated = True
+                                    if parse_pin("PA11", "stm1_pa11"): stm1_updated = True
+                                    if parse_pin("PA12", "stm1_pa12"): stm1_updated = True
+                                    if parse_pin("PC4", "stm1_pc4"): stm1_updated = True
+
+                                    # M119 표준 리포트 파싱
+                                    if "TIM2_Z_PROBE:" in clean_line:
+                                        sensor_states["stm1_pd2"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
+                                        stm1_updated = True
+                                    if "REF_SENS_1:" in clean_line:
+                                        sensor_states["stm1_pc6"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
+                                        stm1_updated = True
+                                    if "REF_SENS_2:" in clean_line:
+                                        sensor_states["stm1_pc7"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
+                                        stm1_updated = True
+                                    if "TIM3_LIMIT_3:" in clean_line:
+                                        sensor_states["stm1_pa11"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
+                                        stm1_updated = True
+                                    if "TIM3_LIMIT_4:" in clean_line:
+                                        sensor_states["stm1_pa12"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
+                                        stm1_updated = True
+                                    if "UPPER_SENS_1:" in clean_line:
+                                        sensor_states["stm1_pc4"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
+                                        stm1_updated = True
+
+                                    # 2. X, Y, Z 현재 좌표 파싱 (호밍 완료 및 탐색 완료 수신 시)
+                                    if "HOMING DONE:" in clean_line:
+                                        try:
+                                            # 예: Homing Done: X0 Y0 Z0
+                                            parts = clean_line.split("HOMING DONE:")[1].strip().split()
+                                            for p in parts:
+                                                if p.startswith("X"): stm1_pos["X"] = int(p[1:])
+                                                elif p.startswith("Y"): stm1_pos["Y"] = int(p[1:])
+                                                elif p.startswith("Z"): stm1_pos["Z"] = int(p[1:])
+                                            stm1_updated = True
+                                        except Exception:
+                                            pass
+                                    elif "[PROBE_X:OK]" in clean_line and "X_POS:" in clean_line:
+                                        try:
+                                            x_val = clean_line.split("X_POS:")[1].split()[0]
+                                            stm1_pos["X"] = int(x_val)
+                                            stm1_updated = True
+                                        except Exception:
+                                            pass
+                                    elif "[PROBE_Z:OK]" in clean_line and "Z_POS:" in clean_line:
+                                        try:
+                                            z_val = clean_line.split("Z_POS:")[1].split()[0]
+                                            stm1_pos["Z"] = int(z_val)
+                                            stm1_updated = True
+                                        except Exception:
+                                            pass
+
+                                    if stm1_updated:
+                                        update_vision1_display()
 
                                 elif i == board_slot_map.get(2, 2):
                                     parse_pin("PD2", "stm2_pd2")
@@ -534,6 +655,20 @@ def send_slot_command(slot_id, gcode):
                 ser.write((gcode.strip() + "\r\n").encode("utf-8"))
                 ser.flush()
                 print(f"[TX Slot{slot_id}] {gcode}")
+
+                # STM1으로 G0/G1 또는 G92 좌표 이동 명령 전송 시 파이썬 가상 좌표 즉시 반영
+                if slot_id == board_slot_map.get(1, 1):
+                    cg = gcode.upper()
+                    if cg.startswith("G0 ") or cg.startswith("G1 ") or cg.startswith("G92 "):
+                        for token in cg.split():
+                            if token.startswith("X") and token[1:].lstrip('-').replace('.', '', 1).isdigit():
+                                stm1_pos["X"] = int(float(token[1:]))
+                            elif token.startswith("Y") and token[1:].lstrip('-').replace('.', '', 1).isdigit():
+                                stm1_pos["Y"] = int(float(token[1:]))
+                            elif token.startswith("Z") and token[1:].lstrip('-').replace('.', '', 1).isdigit():
+                                stm1_pos["Z"] = int(float(token[1:]))
+                        update_vision1_display()
+
                 return True
             except Exception as e:
                 print(f"[!] Slot {slot_id} 송신 에러: {e}")
@@ -668,7 +803,6 @@ def schedule_pipeline():
     sync_order_queue_ui()
     sync_connection_info_ui()
 
-    # [사전 감지] 6-1단계: 조리시간 11분 초과 요리 발견 시 stm_unit_3 접시 사전 준비
     if not is_unit3_busy and unit3_stage6_status == "idle":
         for info in heat_units.values():
             if info["status"] == "cooking" and info["total_cook_time"] >= TIMER_STAGE6_TRIGGER:
@@ -676,14 +810,12 @@ def schedule_pipeline():
                 _run_stage6_1_plate_feed()
                 break
 
-    # [1순위] 4단계: 위상 변화
     if not is_unit2_busy and not (plate_flipping_lock[1] or plate_flipping_lock[2]):
         if plate_phase_timer[1] >= TIMER_UNIT_STAY_MAX or plate_phase_timer[2] >= TIMER_UNIT_STAY_MAX:
             print("[우선순위 1: 4단계 위상변화] 2분 주기 도달 -> Set1/Set2 위상 회전")
             rotate_both_plates_synchronized()
             return
 
-    # [2순위] 1단계: pick and place (stm_unit_1)
     if not is_unit1_busy:
         c1_pending = None
         for item in active_orders:
@@ -697,7 +829,6 @@ def schedule_pipeline():
         if c1_pending and pc7_ok and pd2_ok:
             _start_stage1_pick(c1_pending)
 
-    # [3순위] 5단계: 배출 (stm_unit_2)
     if not is_unit2_busy:
         finished_candidates = []
         for s_id, info in heat_units.items():
@@ -720,7 +851,6 @@ def schedule_pipeline():
     if is_unit2_busy:
         return
 
-    # [4순위] 2단계: unit change
     stage1_done_item = get_ready_stage1_item()
     if stage1_done_item is not None:
         block_by_limit = has_cooking_over_limit() if not SIMULATION_MODE else False
@@ -732,7 +862,6 @@ def schedule_pipeline():
             _run_stage2_unit_change(stage1_done_item)
             return
 
-    # [5순위] 3단계: cook and place
     placing_item = None
     for item in active_orders:
         if item.get("status") == "2단계:완료대기":
@@ -963,7 +1092,6 @@ def _run_stage6_1_plate_feed():
     unit3_stage6_status = "plate_fed"
     unit3_slot = board_slot_map.get(3, 3)
 
-    # 채널 선정 및 안전 차감
     if dish_stock["tim3_ch3"] > 0:
         feeder_ch = 0
         dish_stock["tim3_ch3"] -= 1
@@ -976,6 +1104,7 @@ def _run_stage6_1_plate_feed():
         feeder_ch = -1
         print("[!] 경고: 접시 장전 수량이 완전히 소진되었습니다!")
 
+    update_system_statusbar()
     gcodes = get_stage6_1_plate_feed_gcode(feeder_ch)
 
     def _done_6_1():
@@ -1623,21 +1752,35 @@ for idx, title in enumerate(cam_titles):
     disp_lbl = tk.Label(cam_lf, text=f"CAM {idx+1}\n(Standby)", bg="#111111", fg="#777777", font=("Arial", 12))
     disp_lbl.pack(fill="both", expand=True)
 
-# 우측 비전 상태 분석 패널
+# ----------------------------------------------------
+# 우측 상태 분석 패널 (Vision #1: stm1_unit_1 실시간 상태 모니터링)
+# ----------------------------------------------------
 analysis_panel.rowconfigure(0, weight=1)
 analysis_panel.rowconfigure(1, weight=1)
 analysis_panel.rowconfigure(2, weight=1)
 analysis_panel.columnconfigure(0, weight=1)
 
-analysis_titles = ["Vision #1 이송 상태", "Vision #2 조리 상태", "Vision #3 배출 상태"]
+analysis_titles = ["Vision #1 (STM1 이송/센서 상태)", "Vision #2 조리 상태", "Vision #3 배출 상태"]
 for section_idx, title in enumerate(analysis_titles):
     sec_lf = tk.LabelFrame(analysis_panel, text=title, padx=4, pady=4)
     sec_lf.grid(row=section_idx, column=0, sticky="nsew", padx=3, pady=3)
     for r in range(3): sec_lf.rowconfigure(r, weight=1)
     for c in range(3): sec_lf.columnconfigure(c, weight=1)
+    
     for b_idx in range(9):
-        btn = tk.Button(sec_lf, text=f"S{section_idx+1}-P{b_idx+1}\n[OK]", font=("Arial", 8), bg="#f1f5f9")
+        # Vision #1 전용 초기 라벨 및 스타일 지정
+        if section_idx == 0:
+            init_labels = [
+                "X 좌표\n[0]", "Y 좌표\n[0]", "Z 좌표\n[0]",
+                "PD2(Z_PROBE)\n[OPEN]", "PC6(X_REF)\n[OPEN]", "PC7(UNIT_SYNC)\n[OPEN]",
+                "PA11(CH3_LIM)\n[OPEN]", "PA12(CH4_LIM)\n[OPEN]", "PC4(RODLESS1)\n[OPEN]"
+            ]
+            btn = tk.Button(sec_lf, text=init_labels[b_idx], font=("Arial", 8), bg="#f1f5f9")
+        else:
+            btn = tk.Button(sec_lf, text=f"S{section_idx+1}-P{b_idx+1}\n[OK]", font=("Arial", 8), bg="#f1f5f9")
+            
         btn.grid(row=b_idx // 3, column=b_idx % 3, padx=2, pady=2, sticky="nsew")
+        analysis_buttons[section_idx].append(btn)
 
 # 시스템 상태 패널
 chat_panel.rowconfigure(0, weight=1)
