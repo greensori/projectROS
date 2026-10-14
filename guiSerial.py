@@ -55,8 +55,10 @@ overflow_orders = []
 
 current_serving_plate = None
 
-# STM1 유닛 상태 모니터링 변수 (Vision #1 패널 표시용)
+# STM 유닛별 실시간 좌표 모니터링 변수 (Vision 1, 2, 3 표시용)
 stm1_pos = {"X": 0, "Y": 0, "Z": 0}
+stm2_pos = {"X": 0, "Y": 0, "Z": 0}
+stm3_pos = {"X": 0, "Y": 0, "Z": 0}
 
 # ----------------------------------------------------
 # 1. 1~6단계 G-code 생성 함수군
@@ -221,21 +223,24 @@ heat_units = {
 plate_phase_timer = {1: 0.0, 2: 0.0}
 plate_last_tick = time.time()
 
-# 센서 상태 통합 관리 (STM1 요구 센서 포함)
+# 센서 상태 통합 관리
 sensor_states = {
+    # STM1
     "stm1_pd2": "no trigger",
     "stm1_pc7": "no trigger",
     "stm1_pc6": "no trigger",
     "stm1_pa11": "no trigger",
     "stm1_pa12": "no trigger",
     "stm1_pc4": "no trigger",
+    # STM2
     "stm2_pd2": "no trigger",
     "stm2_pc6": "no trigger",
     "stm2_pc7": "no trigger",
     "stm2_pa9": "no trigger",
     "stm2_pa10": "no trigger",
-    "stm2_pb9": "no trigger",
-    "stm2_pc5": "no trigger",
+    # STM3 (요청: PB9, PC5 탐지프로브)
+    "stm3_pb9": "no trigger",
+    "stm3_pc5": "no trigger",
     "stm3_pd2": "no trigger",
     "stm3_pc6": "no trigger",
     "stm3_pc7": "no trigger"
@@ -416,19 +421,18 @@ def notify_slot_ok_received(slot_id):
             App.after(5, lambda: _send_job_line(slot_id))
 
 # ----------------------------------------------------
-# 5. 시리얼 통신 인터페이스 & STM1 데이터 파싱
+# 5. 시리얼 통신 인터페이스 & Vision 1, 2, 3 디스플레이 동기화
 # ----------------------------------------------------
 def update_vision1_display():
-    """STM1 보드에서 데이터가 왔을 때만 Vision #1 패널의 9개 버튼 텍스트와 색상을 갱신"""
+    """STM1 보드 수신 데이터 반영 (Vision #1 패널)"""
     if len(analysis_buttons[0]) < 9:
         return
-
     btns = analysis_buttons[0]
 
     # [1행] TIM2 3축 실시간 좌표 (X, Y, Z)
-    btns[0].configure(text=f"X 좌표\n[{stm1_pos['X']}]", bg="#e0f2fe", fg="#0369a1")
-    btns[1].configure(text=f"Y 좌표\n[{stm1_pos['Y']}]", bg="#e0f2fe", fg="#0369a1")
-    btns[2].configure(text=f"Z 좌표\n[{stm1_pos['Z']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[0].configure(text=f"U1 X좌표\n[{stm1_pos['X']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[1].configure(text=f"U1 Y좌표\n[{stm1_pos['Y']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[2].configure(text=f"U1 Z좌표\n[{stm1_pos['Z']}]", bg="#e0f2fe", fg="#0369a1")
 
     # [2행] 핵심 센서 3종 (PD2, PC6, PC7)
     s_pd2 = sensor_states.get("stm1_pd2", "no trigger")
@@ -471,6 +475,91 @@ def update_vision1_display():
         bg="#ede9fe" if s_pc4 == "triggered" else "#f1f5f9",
         fg="#6d28d9" if s_pc4 == "triggered" else "#475569"
     )
+
+def update_vision2_display():
+    """STM2 보드 수신 데이터 반영 (Vision #2 패널)"""
+    if len(analysis_buttons[1]) < 9:
+        return
+    btns = analysis_buttons[1]
+
+    # [1행] STM2 XYZ 이송유닛 좌표
+    btns[0].configure(text=f"U2 X좌표\n[{stm2_pos['X']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[1].configure(text=f"U2 Y좌표\n[{stm2_pos['Y']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[2].configure(text=f"U2 Z좌표\n[{stm2_pos['Z']}]", bg="#e0f2fe", fg="#0369a1")
+
+    # [2행] STM2 리미트 / 센서 상황 (PD2, PC6, PC7)
+    s_pd2 = sensor_states.get("stm2_pd2", "no trigger")
+    s_pc6 = sensor_states.get("stm2_pc6", "no trigger")
+    s_pc7 = sensor_states.get("stm2_pc7", "no trigger")
+
+    btns[3].configure(
+        text=f"PD2(Z_LIM)\n[{'TRIG' if s_pd2 == 'triggered' else 'OPEN'}]",
+        bg="#dcfce7" if s_pd2 == "triggered" else "#f1f5f9",
+        fg="#15803d" if s_pd2 == "triggered" else "#475569"
+    )
+    btns[4].configure(
+        text=f"PC6(DOCK_LIM)\n[{'TRIG' if s_pc6 == 'triggered' else 'OPEN'}]",
+        bg="#dcfce7" if s_pc6 == "triggered" else "#f1f5f9",
+        fg="#15803d" if s_pc6 == "triggered" else "#475569"
+    )
+    btns[5].configure(
+        text=f"PC7(SYNC_LIM)\n[{'TRIG' if s_pc7 == 'triggered' else 'OPEN'}]",
+        bg="#ffedd5" if s_pc7 == "triggered" else "#f1f5f9",
+        fg="#c2410c" if s_pc7 == "triggered" else "#475569"
+    )
+
+    # [3행] TIM3 1채널 & 2채널 위상변화 조리기구 상태
+    hp1_side = "앞면" if plate_current_side[1] == "front" else "뒷면"
+    hp2_side = "앞면" if plate_current_side[2] == "front" else "뒷면"
+    is_flipping = plate_flipping_lock[1] or plate_flipping_lock[2]
+
+    btns[6].configure(
+        text=f"HP1(CH1)\n[{hp1_side}]",
+        bg="#16a34a" if hp1_side == "앞면" else "#2563eb",
+        fg="#ffffff"
+    )
+    btns[7].configure(
+        text=f"HP2(CH2)\n[{hp2_side}]",
+        bg="#16a34a" if hp2_side == "앞면" else "#2563eb",
+        fg="#ffffff"
+    )
+    btns[8].configure(
+        text=f"조리위상상태\n[{'회전중' if is_flipping else '정상대기'}]",
+        bg="#ea580c" if is_flipping else "#f8fafc",
+        fg="#ffffff" if is_flipping else "#334155"
+    )
+
+def update_vision3_display():
+    """STM3 보드 수신 데이터 반영 (Vision #3 패널)"""
+    if len(analysis_buttons[2]) < 9:
+        return
+    btns = analysis_buttons[2]
+
+    # [1행] STM3 XYZ 이송유닛 좌표
+    btns[0].configure(text=f"U3 X좌표\n[{stm3_pos['X']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[1].configure(text=f"U3 Y좌표\n[{stm3_pos['Y']}]", bg="#e0f2fe", fg="#0369a1")
+    btns[2].configure(text=f"U3 Z좌표\n[{stm3_pos['Z']}]", bg="#e0f2fe", fg="#0369a1")
+
+    # [2행] TIM3 탐지프로브 PB9, PC5 센서 상태 (3번째는 미지정)
+    s_pb9 = sensor_states.get("stm3_pb9", "no trigger")
+    s_pc5 = sensor_states.get("stm3_pc5", "no trigger")
+
+    btns[3].configure(
+        text=f"PB9(PROBE1)\n[{'TRIG' if s_pb9 == 'triggered' else 'OPEN'}]",
+        bg="#dcfce7" if s_pb9 == "triggered" else "#f1f5f9",
+        fg="#15803d" if s_pb9 == "triggered" else "#475569"
+    )
+    btns[4].configure(
+        text=f"PC5(PROBE2)\n[{'TRIG' if s_pc5 == 'triggered' else 'OPEN'}]",
+        bg="#dcfce7" if s_pc5 == "triggered" else "#f1f5f9",
+        fg="#15803d" if s_pc5 == "triggered" else "#475569"
+    )
+    btns[5].configure(text="미지정\n[-]", bg="#f1f5f9", fg="#94a3b8")
+
+    # [3행] 미지정 3개
+    btns[6].configure(text="미지정 1\n[-]", bg="#f1f5f9", fg="#94a3b8")
+    btns[7].configure(text="미지정 2\n[-]", bg="#f1f5f9", fg="#94a3b8")
+    btns[8].configure(text="미지정 3\n[-]", bg="#f1f5f9", fg="#94a3b8")
 
 def autoDetectAndConnect():
     global portlist, port_names, board_slot_map
@@ -522,7 +611,7 @@ def serialDisconnectAll():
             c6Label[i].configure(text="DC", foreground="black")
 
 def serialTester():
-    global portlist, rx_buffers, board_slot_map, sensor_states, stm1_pos
+    global portlist, rx_buffers, board_slot_map, sensor_states, stm1_pos, stm2_pos, stm3_pos
     if not is_running:
         return
 
@@ -553,92 +642,126 @@ def serialTester():
                                     if f"READY_{b_id}" in clean_line or f"UNIT{b_id}" in clean_line:
                                         board_slot_map[b_id] = i
 
-                                def parse_pin(pin_name, key_name):
+                                def parse_pin_state(pin_name):
                                     if f"{pin_name}:TRIGGERED" in clean_line or f"{pin_name}:CLOSED" in clean_line:
-                                        sensor_states[key_name] = "triggered"
-                                        return True
+                                        return "triggered"
                                     elif f"{pin_name}:OPEN" in clean_line or f"{pin_name}:NOTRIGGER" in clean_line:
-                                        sensor_states[key_name] = "no trigger"
-                                        return True
-                                    return False
+                                        return "no trigger"
+                                    return None
 
-                                # STM1 데이터 파싱 및 Vision #1 즉시 반영
+                                # --------------------------------------------
+                                # 1. STM1 데이터 파싱 및 Vision #1 실시간 반영
+                                # --------------------------------------------
                                 if i == board_slot_map.get(1, 1):
-                                    stm1_updated = False
+                                    s1_up = False
+                                    for pin, k in [("PD2", "stm1_pd2"), ("PC7", "stm1_pc7"), ("PC6", "stm1_pc6"),
+                                                   ("PA11", "stm1_pa11"), ("PA12", "stm1_pa12"), ("PC4", "stm1_pc4")]:
+                                        st = parse_pin_state(pin)
+                                        if st:
+                                            sensor_states[k] = st
+                                            s1_up = True
 
-                                    # 1. 센서 데이터 파싱
-                                    if parse_pin("PD2", "stm1_pd2"): stm1_updated = True
-                                    if parse_pin("PC7", "stm1_pc7"): stm1_updated = True
-                                    if parse_pin("PC6", "stm1_pc6"): stm1_updated = True
-                                    if parse_pin("PA11", "stm1_pa11"): stm1_updated = True
-                                    if parse_pin("PA12", "stm1_pa12"): stm1_updated = True
-                                    if parse_pin("PC4", "stm1_pc4"): stm1_updated = True
-
-                                    # M119 표준 리포트 파싱
                                     if "TIM2_Z_PROBE:" in clean_line:
                                         sensor_states["stm1_pd2"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
-                                        stm1_updated = True
+                                        s1_up = True
                                     if "REF_SENS_1:" in clean_line:
                                         sensor_states["stm1_pc6"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
-                                        stm1_updated = True
+                                        s1_up = True
                                     if "REF_SENS_2:" in clean_line:
                                         sensor_states["stm1_pc7"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
-                                        stm1_updated = True
+                                        s1_up = True
                                     if "TIM3_LIMIT_3:" in clean_line:
                                         sensor_states["stm1_pa11"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
-                                        stm1_updated = True
+                                        s1_up = True
                                     if "TIM3_LIMIT_4:" in clean_line:
                                         sensor_states["stm1_pa12"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
-                                        stm1_updated = True
+                                        s1_up = True
                                     if "UPPER_SENS_1:" in clean_line:
                                         sensor_states["stm1_pc4"] = "triggered" if "TRIGGERED" in clean_line else "no trigger"
-                                        stm1_updated = True
+                                        s1_up = True
 
-                                    # 2. X, Y, Z 현재 좌표 파싱 (호밍 완료 및 탐색 완료 수신 시)
                                     if "HOMING DONE:" in clean_line:
                                         try:
-                                            # 예: Homing Done: X0 Y0 Z0
                                             parts = clean_line.split("HOMING DONE:")[1].strip().split()
                                             for p in parts:
                                                 if p.startswith("X"): stm1_pos["X"] = int(p[1:])
                                                 elif p.startswith("Y"): stm1_pos["Y"] = int(p[1:])
                                                 elif p.startswith("Z"): stm1_pos["Z"] = int(p[1:])
-                                            stm1_updated = True
-                                        except Exception:
-                                            pass
+                                            s1_up = True
+                                        except Exception: pass
                                     elif "[PROBE_X:OK]" in clean_line and "X_POS:" in clean_line:
                                         try:
-                                            x_val = clean_line.split("X_POS:")[1].split()[0]
-                                            stm1_pos["X"] = int(x_val)
-                                            stm1_updated = True
-                                        except Exception:
-                                            pass
+                                            stm1_pos["X"] = int(clean_line.split("X_POS:")[1].split()[0])
+                                            s1_up = True
+                                        except Exception: pass
                                     elif "[PROBE_Z:OK]" in clean_line and "Z_POS:" in clean_line:
                                         try:
-                                            z_val = clean_line.split("Z_POS:")[1].split()[0]
-                                            stm1_pos["Z"] = int(z_val)
-                                            stm1_updated = True
-                                        except Exception:
-                                            pass
+                                            stm1_pos["Z"] = int(clean_line.split("Z_POS:")[1].split()[0])
+                                            s1_up = True
+                                        except Exception: pass
 
-                                    if stm1_updated:
+                                    if s1_up:
                                         update_vision1_display()
 
+                                # --------------------------------------------
+                                # 2. STM2 데이터 파싱 및 Vision #2 실시간 반영
+                                # --------------------------------------------
                                 elif i == board_slot_map.get(2, 2):
-                                    parse_pin("PD2", "stm2_pd2")
-                                    parse_pin("PC6", "stm2_pc6")
-                                    parse_pin("PC7", "stm2_pc7")
-                                    parse_pin("PA9", "stm2_pa9")
-                                    parse_pin("PA10", "stm2_pa10")
-                                    parse_pin("PB9", "stm2_pb9")
-                                    parse_pin("PC5", "stm2_pc5")
+                                    s2_up = False
+                                    for pin, k in [("PD2", "stm2_pd2"), ("PC6", "stm2_pc6"), ("PC7", "stm2_pc7")]:
+                                        st = parse_pin_state(pin)
+                                        if st:
+                                            sensor_states[k] = st
+                                            s2_up = True
 
+                                    if "HOMING DONE:" in clean_line:
+                                        try:
+                                            parts = clean_line.split("HOMING DONE:")[1].strip().split()
+                                            for p in parts:
+                                                if p.startswith("X"): stm2_pos["X"] = int(p[1:])
+                                                elif p.startswith("Y"): stm2_pos["Y"] = int(p[1:])
+                                                elif p.startswith("Z"): stm2_pos["Z"] = int(p[1:])
+                                            s2_up = True
+                                        except Exception: pass
+                                    elif "[PROBE_X:OK]" in clean_line and "X_POS:" in clean_line:
+                                        try:
+                                            stm2_pos["X"] = int(clean_line.split("X_POS:")[1].split()[0])
+                                            s2_up = True
+                                        except Exception: pass
+                                    elif "[PROBE_Z:OK]" in clean_line and "Z_POS:" in clean_line:
+                                        try:
+                                            stm2_pos["Z"] = int(clean_line.split("Z_POS:")[1].split()[0])
+                                            s2_up = True
+                                        except Exception: pass
+
+                                    if s2_up:
+                                        update_vision2_display()
+
+                                # --------------------------------------------
+                                # 3. STM3 데이터 파싱 및 Vision #3 실시간 반영
+                                # --------------------------------------------
                                 elif i == board_slot_map.get(3, 3):
-                                    parse_pin("PD2", "stm3_pd2")
-                                    parse_pin("PC6", "stm3_pc6")
-                                    parse_pin("PC7", "stm3_pc7")
+                                    s3_up = False
+                                    for pin, k in [("PB9", "stm3_pb9"), ("PC5", "stm3_pc5"), ("PD2", "stm3_pd2"), ("PC6", "stm3_pc6"), ("PC7", "stm3_pc7")]:
+                                        st = parse_pin_state(pin)
+                                        if st:
+                                            sensor_states[k] = st
+                                            s3_up = True
 
-                                if not SIMULATION_MODE and ("OK" in clean_line):
+                                    if "HOMING DONE:" in clean_line:
+                                        try:
+                                            parts = clean_line.split("HOMING DONE:")[1].strip().split()
+                                            for p in parts:
+                                                if p.startswith("X"): stm3_pos["X"] = int(p[1:])
+                                                elif p.startswith("Y"): stm3_pos["Y"] = int(p[1:])
+                                                elif p.startswith("Z"): stm3_pos["Z"] = int(p[1:])
+                                            s3_up = True
+                                        except Exception: pass
+
+                                    if s3_up:
+                                        update_vision3_display()
+
+                                if not SIMULATION_MODE and (clean_line == "OK" or clean_line.endswith("OK")):
                                     notify_slot_ok_received(i)
                 except Exception:
                     if c6Label[i].winfo_exists():
@@ -656,18 +779,28 @@ def send_slot_command(slot_id, gcode):
                 ser.flush()
                 print(f"[TX Slot{slot_id}] {gcode}")
 
-                # STM1으로 G0/G1 또는 G92 좌표 이동 명령 전송 시 파이썬 가상 좌표 즉시 반영
-                if slot_id == board_slot_map.get(1, 1):
-                    cg = gcode.upper()
-                    if cg.startswith("G0 ") or cg.startswith("G1 ") or cg.startswith("G92 "):
+                # G0/G1/G92 가상 좌표 실시간 동기화
+                cg = gcode.upper()
+                if cg.startswith("G0 ") or cg.startswith("G1 ") or cg.startswith("G92 "):
+                    target_dict = None
+                    update_func = None
+                    if slot_id == board_slot_map.get(1, 1):
+                        target_dict = stm1_pos; update_func = update_vision1_display
+                    elif slot_id == board_slot_map.get(2, 2):
+                        target_dict = stm2_pos; update_func = update_vision2_display
+                    elif slot_id == board_slot_map.get(3, 3):
+                        target_dict = stm3_pos; update_func = update_vision3_display
+
+                    if target_dict:
                         for token in cg.split():
                             if token.startswith("X") and token[1:].lstrip('-').replace('.', '', 1).isdigit():
-                                stm1_pos["X"] = int(float(token[1:]))
+                                target_dict["X"] = int(float(token[1:]))
                             elif token.startswith("Y") and token[1:].lstrip('-').replace('.', '', 1).isdigit():
-                                stm1_pos["Y"] = int(float(token[1:]))
+                                target_dict["Y"] = int(float(token[1:]))
                             elif token.startswith("Z") and token[1:].lstrip('-').replace('.', '', 1).isdigit():
-                                stm1_pos["Z"] = int(float(token[1:]))
-                        update_vision1_display()
+                                target_dict["Z"] = int(float(token[1:]))
+                        if update_func:
+                            update_func()
 
                 return True
             except Exception as e:
@@ -1005,6 +1138,8 @@ def rotate_both_plates_synchronized():
     plate_flipping_lock[2] = True
     unit2_slot = board_slot_map.get(2, 2)
 
+    update_vision2_display()
+
     pc6_is_open = (sensor_states["stm2_pc6"] == "no trigger") or (plate_current_side[1] == "front")
 
     if pc6_is_open:
@@ -1037,6 +1172,7 @@ def rotate_both_plates_synchronized():
 
         print(f"▶ [4단계 위상변화 완료] HP1:{to_side_1}, HP2:{to_side_2} (체류시간 0초 리셋 및 2분 대기 루프 시작)")
         sync_heat_units_ui()
+        update_vision2_display()
         schedule_pipeline()
 
     execute_gcode_sequence(unit2_slot, flip_gcodes, on_done=_done_both_flips)
@@ -1753,32 +1889,51 @@ for idx, title in enumerate(cam_titles):
     disp_lbl.pack(fill="both", expand=True)
 
 # ----------------------------------------------------
-# 우측 상태 분석 패널 (Vision #1: stm1_unit_1 실시간 상태 모니터링)
+# 우측 상태 분석 패널 (Vision #1, #2, #3 동적 상태 모니터링)
 # ----------------------------------------------------
 analysis_panel.rowconfigure(0, weight=1)
 analysis_panel.rowconfigure(1, weight=1)
 analysis_panel.rowconfigure(2, weight=1)
 analysis_panel.columnconfigure(0, weight=1)
 
-analysis_titles = ["Vision #1 (STM1 이송/센서 상태)", "Vision #2 조리 상태", "Vision #3 배출 상태"]
+analysis_titles = [
+    "Vision #1 (STM1 이송/센서 상태)",
+    "Vision #2 (STM2 조리/위상반전 상태)",
+    "Vision #3 (STM3 접시/배출 상태)"
+]
+
 for section_idx, title in enumerate(analysis_titles):
     sec_lf = tk.LabelFrame(analysis_panel, text=title, padx=4, pady=4)
     sec_lf.grid(row=section_idx, column=0, sticky="nsew", padx=3, pady=3)
     for r in range(3): sec_lf.rowconfigure(r, weight=1)
     for c in range(3): sec_lf.columnconfigure(c, weight=1)
-    
+
     for b_idx in range(9):
-        # Vision #1 전용 초기 라벨 및 스타일 지정
+        # Vision #1 전용 초기 라벨
         if section_idx == 0:
             init_labels = [
-                "X 좌표\n[0]", "Y 좌표\n[0]", "Z 좌표\n[0]",
+                "U1 X좌표\n[0]", "U1 Y좌표\n[0]", "U1 Z좌표\n[0]",
                 "PD2(Z_PROBE)\n[OPEN]", "PC6(X_REF)\n[OPEN]", "PC7(UNIT_SYNC)\n[OPEN]",
                 "PA11(CH3_LIM)\n[OPEN]", "PA12(CH4_LIM)\n[OPEN]", "PC4(RODLESS1)\n[OPEN]"
             ]
             btn = tk.Button(sec_lf, text=init_labels[b_idx], font=("Arial", 8), bg="#f1f5f9")
+        # Vision #2 전용 초기 라벨
+        elif section_idx == 1:
+            init_labels = [
+                "U2 X좌표\n[0]", "U2 Y좌표\n[0]", "U2 Z좌표\n[0]",
+                "PD2(Z_LIM)\n[OPEN]", "PC6(DOCK_LIM)\n[OPEN]", "PC7(SYNC_LIM)\n[OPEN]",
+                "HP1(CH1)\n[앞면]", "HP2(CH2)\n[뒷면]", "조리위상상태\n[정상대기]"
+            ]
+            btn = tk.Button(sec_lf, text=init_labels[b_idx], font=("Arial", 8), bg="#f1f5f9")
+        # Vision #3 전용 초기 라벨
         else:
-            btn = tk.Button(sec_lf, text=f"S{section_idx+1}-P{b_idx+1}\n[OK]", font=("Arial", 8), bg="#f1f5f9")
-            
+            init_labels = [
+                "U3 X좌표\n[0]", "U3 Y좌표\n[0]", "U3 Z좌표\n[0]",
+                "PB9(PROBE1)\n[OPEN]", "PC5(PROBE2)\n[OPEN]", "미지정\n[-]",
+                "미지정 1\n[-]", "미지정 2\n[-]", "미지정 3\n[-]"
+            ]
+            btn = tk.Button(sec_lf, text=init_labels[b_idx], font=("Arial", 8), bg="#f1f5f9")
+
         btn.grid(row=b_idx // 3, column=b_idx % 3, padx=2, pady=2, sticky="nsew")
         analysis_buttons[section_idx].append(btn)
 
@@ -1838,6 +1993,11 @@ if __name__ == '__main__':
 
     for i in range(NUM_TABLES):
         update_table_ui(i)
+
+    # 초기 디스플레이 상태 동기화
+    update_vision1_display()
+    update_vision2_display()
+    update_vision3_display()
 
     App.protocol("WM_DELETE_WINDOW", on_closing)
     App.after(100, serialTester)
