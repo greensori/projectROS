@@ -39,22 +39,21 @@
 │   ├── stm_unit_1. tim2 XYZ 이송 유닛 (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
 │   │   ├── (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
 │   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
-│   │   ├── PC10(파지유닛 1), PC11(파지유닛2), PC12(예압조정)
+│   │   ├── PC10(파지유닛), PC11(예압조정)
 │   ├── OPENER_1. tim3 ch1 (냉장고 1호 오픈)
 │   ├── OPENER_2. tim3 ch2 (냉장고 2호 오픈)
-│   ├── Ignite_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC9 으로 안전밸브 해제)
-│   ├── Ignite_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC3 으로 안전밸브 해제)
-│   ├── rodless_unit_1. (시작리미트 PC4, 엔드리미트 PC5)
+│   ├── Platter_1. tim3 ch3 () (소스 분배. 파슬리)
+│   ├── Platter_2. tim3 ch4 () (소스 분배. 파프리카가루)
+│   ├── rodless_unit_1. (시작 PC2, 엔드pc3) (시작리미트 pd2, 엔드리미트 pb7), (pc12 도킹 파지, 확인 센서 pb5). #미지정 인풋 유닛
 │   │ 
 ├── (stm_2)
 │   ├── stm_unit_2. tim2 XYZ 이송 유닛
-│   │   ├── (테이블상단에 (stm1, PC7)입력센서 존재, G40과 연동하여 물건 탐지시까지 이동(도킹) 수행)
-│   │   ├── (테이블상단에 (stm1, PC7)입력센서 존재, heat plated에서 요리 도킹시에 해당 센서 확인)
-│   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행, heat plate에 전달하기 위함)
-│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PA9, 역방향리미트 PB9) (정방향 공압(PA4, 역방향 PC2)
-│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PA10, 역방향리미트 PC5) (정방향 공압(PB2, 역방향 PC3)
-│   ├── Platter_1. tim3 ch3 () (소스 분배. 파슬리)
-│   ├── Platter_2. tim3 ch4 () (소스 분배. 파프리카가루)
+│   │   ├── (테이블상단에 (PB9)입력센서 존재, G39과 연동하여 물건 탐지시까지 이동(도킹) 수행)
+│   │   ├── (X축 PC9입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행, heat plate에 전달하기 위함)
+│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PB13, 역방향리미트 PC8) (정방향 공압 & 락링(PC2, 역방향 PC3)
+│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PB14, 역방향리미트 PC6) (정방향 공압 & 락킹(PC10, 역방향 PC11)
+│   ├── Ignite_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC9 으로 안전밸브 해제)
+│   ├── Ignite_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC3 으로 안전밸브 해제)
 │   │ 
 ├── (stm_3)
 │   ├── stm_unit_3. tim2 XYZ 이송 유닛. #컨베이어 이송완료된 접시를 받아야 함
@@ -69,8 +68,9 @@
 
 조리 프로세스
 ├── 1단계 pick and place (stm_unit_1)
-│   ├── EXEC_TRIGGER: 주문 대기열 존재 && 이전 공정 완료
-│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
+│   ├── EXEC_TRIGGER: 주문 대기열 존재 && 1-1단계 공정상태('idle')상태
+│   ├── SENSOR_READ: M119 (타겟 핀: PB9, PB5, PD2)
+│   ├── COMMON_ACTIONS: 1-1단계 공정상태('busy') 변경
 │   │
 │   ├── BRANCH_RULES:
 │   │   ├── [RULE_A] IF (PD2: OPEN && 주문메뉴('수블라키', '투움')
@@ -113,9 +113,29 @@
 │   │   |- G1 y2000
 │   │   |- G1 z200  
 │   │   |- G40 (z축 센서 탐지시(PD2) 까지 이동, 냉장고 쪽)
-│   │   |- M800 P4 S1 (공압유닛 작동)
-│   │   |- M800 P5 S1 (공압유닛 작동)
-│   │   `- G28 z y
+│   │   |- M800 P2 S1 (공압유닛 작동)
+│   │   |- M800 P3 S1 (공압유닛 작동)
+│   │   |- G28 z y
+│   │   `- 1-1단계 공정상태('complete') 변경
+│   │ 
+│   └── BRANCH_RULES:
+│       ├── [RULE_A] IF (PB5: OPEN and PC2: OPEN) AND 1-1단계 공정상태('complete') AND 1-2단계 공정상태('idle')  #로드리스 도킹 준비 완료
+│       │   └── ACTION_SEQUENCE:
+│       │       |- 1-2단계 공정상태('busy') 변경
+│       │       |- G28 x                    # tim2 유닛 홈 복귀
+│       │       |- M800 P4 S1                  # 도킹 공압유닛 작동
+│       │       |- M800 P2 S0                  # tim2 공압유닛 해제
+│       │       |- M800 P3 S0                  # tim2 공압유닛 해제
+│       │       |- 1초 대기
+│       │       |- 1-1단계 공정상태('idle') 변경.   # tim2 유닛 전달 완료
+│       │       |- M800 P1 S1                  # 로드리스 공압유닛 작동(엔드축으로)
+│       │       |- M800 P0 S0                  # 로드리스 공압유닛 작동(엔드축으로)
+│       │       `- M119                     # 머신 상태 조회
+│       │    
+│       └── [RULE_B] IF (PC2: CLOSE && PB5: CLOSE) OR 1-2단계 공정상태('busy') 
+│          └── ACTION_SEQUENCE:
+│               |- 1초 대기
+│               `- M119                     # 머신 상태 조회
 │   │ 
 │   └── BRANCH_RULES:
 │       ├── [RULE_A] IF (PD2: OPEN && 주문메뉴('수블라키', '투움')
@@ -127,10 +147,23 @@
 │          └── ACTION_SEQUENCE:
 │               |- M128 P1   # 냉장고 닫기
 │               `- M119                     # 머신 상태 조회
+│ 
+│   │ 
+│   └── BRANCH_RULES:
+│       ├── [RULE_A] IF (PB7: CLOSE && 1-2단계 공정상태('busy')
+│       │   └── ACTION_SEQUENCE:
+│       │       |- 1초 대기
+│       │       `- M119                     # 머신 상태 조회
+│       │    
+│       └── [RULE_B] IF (PB7: OPEN && 1-2단계 공정상태('busy')
+│          └── ACTION_SEQUENCE:
+│               |- 1초 대기
+│               `- 1-2단계 공정상태('complete') 변경
 │
 ├── 2-1단계 unit change (stm_unit_2)
-│   ├── EXEC_TRIGGER: 요리 조리타이머가 11분 30초를 초과한 상태가 없을 것 && 1단계 공정이 완료대기 상태일것
-│   ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7)
+│   ├── EXEC_TRIGGER: 요리 조리타이머가 11분 30초를 초과한 상태가 없을 것 && 1-2단계 공정상태('complete') && 2-1단계 공정상태('idle')
+│   ├── SENSOR_READ: M119 (타겟 핀: PB9, PB5, PD2)
+│   ├── COMMON_ACTIONS: 2-1단계 공정상태('busy') 변경
 │   │
 │   └── BRANCH_RULES:
 │       ├── [RULE_A] IF (PC6: OPEN)
