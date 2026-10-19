@@ -231,11 +231,11 @@
 │               `- 2분 대기
 │
 ├── 5단계 cook and place (stm_unit_2) 
-│   ├── EXEC_TRIGGER: 총조리시간이 11분 50초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 
+│   ├── EXEC_TRIGGER: 총조리시간이 11분 30초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 
 │   ├── SENSOR_READ: M119 (타겟 핀: (stm_1)PC7, (stm_2)PA9, (stm_2)PA10, (stm_2)PB9, (stm_2)PC5)
 │   │
 │   └── COMMON_ACTIONS:
-│       |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
+│       |- G1 X()           # heat unit 자리 c: 1번(x200), 2번(x400), .... 14번(x2800)
 │       |- G28 Y
 │       |- G28 Z
 │       |- M800 P0 S1
