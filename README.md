@@ -161,51 +161,57 @@
 │               `- 1-2단계 공정상태('complete') 변경
 │
 ├── 2-1단계 unit change (stm_unit_2)
-│   ├── EXEC_TRIGGER: 요리 조리타이머가 11분 30초를 초과한 상태가 없을 것 && 1-2단계 공정상태('complete') && 2-1단계 공정상태('idle')
+│   ├── EXEC_TRIGGER: 요리 조리타이머가 11분 30초를 초과한 상태가 없을 것 && 1-2단계 공정상태('complete') && 2-1단계 공정상태('idle') && PB9(OPEN)
 │   ├── SENSOR_READ: M119 (타겟 핀: PB9, PB5, PD2)
 │   ├── COMMON_ACTIONS: 2-1단계 공정상태('busy') 변경
-│   │
-│   └── BRANCH_RULES:
-│       ├── [RULE_A] IF (PC6: OPEN)
-│       │   └── ACTION_SEQUENCE:
-│       │       |- G1 X()                # stm보드_1 에서 x축의 좌표를 받아서 그 좌표 +2500만큼 거리를 이동
-│       │       |- G38 X200 F200         # x축 센서탐지(PC6)까지 이동
-│       │       |- G92 X0                # x축 재설정
-│       │       |- G1 X-20 F1000         # x축 조정이동
-│       │       `- G90                   # 절대 좌표 복귀
-│       │    
-│       └── [RULE_B] IF (PC6: CLOSED)
-│           └── ACTION_SEQUENCE:
-│               `- M119                  # 1초 대기 후 M119 재조회
+│       |- G28 Y Z            # 도킹유닛2과 충돌을 피하기 위해서 홈 복귀 
+│       |- G1 X2500           # 도킹유닛2 x축 정렬
+│       |- G37 X200           # 도킹유닛2 x축 정렬(센서 탐지 이동)
+│       |- G1 Y200 Z1500      # 도킹유닛2 YZ축 정렬( ) 
+│       |- G37 Z200.          # 도킹유닛2 그랩 전 Z축 정렬( )
+│       |- M800 P4 S1.        # 도킹유닛2 아이템 그립
+│       `- 2-1단계 공정상태('busy') 변경
 │
 ├── 2-2단계 unit change (stm_unit_1)
+│   ├── EXEC_TRIGGER: 2-2단계 공정상태('idle') && 2-1단계 공정상태('busy')
+│   ├── SENSOR_READ: M119 (타겟 핀: PB9, PB5, PD2)
 │   └── COMMON_ACTIONS:
-│       `- G40 (z축 센서(PC7) 탐지시 까지 이동, 이송유닛 쪽)
+│       |- 2-2단계 공정상태('busy') 변경            # 도킹유닛2과 충돌을 피하기 위해서 홈 복귀 
+│       `- M800 P4 S0         # 도킹유닛2 파지 해제 
 │
 ├── 2-3단계 unit change (stm_unit_2)
+│   ├── EXEC_TRIGGER: 2-2단계 공정상태('busy') && 2-1단계 공정상태('busy') && 2-3단계 공정상태('idle')
+│   ├── SENSOR_READ: M119 (타겟 핀: PB9, PB5, PD2)
 │   └── COMMON_ACTIONS:
-│       |- M800 p0 S1
-│       `- 1초 대기
+│       |- 2-3단계 공정상태('busy') 변경
+│       |- G1 Y500           # 도킹유닛2 x축 이동 (도킹유닛 2와 충돌을 피하기 위함
+│       |- 1초 대기
+│       `- 2-3단계 공정상태('complete') 변경
 │
 ├── 2-4단계 unit change (stm_unit_1)
+│   ├── EXEC_TRIGGER: 2-2단계 공정상태('busy') && 2-1단계 공정상태('busy') && 2-3단계 공정상태('complete')
+│   ├── SENSOR_READ: M119 (타겟 핀: PB9, PB5, PD2)
 │   ├── COMMON_ACTIONS:
-│   │   |- M800 P0 S0
-│   │   |- M800 P1 S0
+│   │   |- 2-3단계 공정상태('idle') 변경
+│   │   |- M800 P0 S0.  # 도킹유닛2 시작지점으로 이동
+│   │   |- M800 P1 S1.  # 도킹유닛2 시작지점으로 이동
 │   │   |- 2초 대기
-│   │   `- G28 
+│   │   `- 2-2단계 공정상태('idle') 변경.  #센서가 트리거 되어야 함
 │   └── (이 단계 이후 조리대기 중인 요리가 있는 경우 1단계로 이동, 하지만 기존 코드는 순차적으로 계속 실행)
 │
 ├── 3단계 cook and place (stm_unit_2) #2개의 heat unit이 있으며, 각각의heat unit에는 최대 7개의 메뉴가 들어갈수 있음
-│   ├── EXEC_TRIGGER: 1 - 14번 heat unit중 idle 상태가 있을것, heat unit 1번 혹은 2번중 한개가 앞면을 표시하고 있을것
+│   ├── EXEC_TRIGGER: 1 - 14번 heat unit중 idle 상태가 있을것, heat unit 1번 혹은 2번중 한개가 앞면을 표시하고 있을것, 2-1단계 공정상태('busy'), 3-1단계 공정상태('idle')
 │   ├── SENSOR_READ: M119 (타겟 핀: PA9, PA10, PB9, PC5)
 │   │
 │   └── COMMON_ACTIONS:
+│       |- 3-1단계 공정상태('busy') 변경 
 │       |- G1 X()           # heat unit 자리 : 1번(x200), 2번(x400), .... 14번(x2800)
 │       |- G1 Z1500 Y1500
 │       |- M800 p0 s0
 │       |- 1초 대기
 │       |- M800 p2 s1
-│       `- G28 Z Y
+│       |- G28 Y Z
+│       `- 2-1단계 공정상태('complete') 변경
 │
 ├── 4단계 go to cook (stm_unit_2) 
 │   ├── EXEC_TRIGGER: NORMAL
@@ -231,7 +237,7 @@
 │               `- 2분 대기
 │
 ├── 5단계 cook and place (stm_unit_2) 
-│   ├── EXEC_TRIGGER: 총조리시간이 11분 30초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 
+│   ├── EXEC_TRIGGER: 총조리시간이 11분 30초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 && 5단계 공정상태('idle')
 │   ├── SENSOR_READ: M119 (타겟 핀: (stm_1)PC7, (stm_2)PA9, (stm_2)PA10, (stm_2)PB9, (stm_2)PC5)
 │   │
 │   └── COMMON_ACTIONS:
