@@ -241,12 +241,12 @@
 │               |- M119
 │               `- 2분 대기
 │
-├── 5단계 cook and place (stm_unit_2) 
-│   ├── EXEC_TRIGGER: 총조리시간이 11분 30초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 && 5단계 공정상태('idle') && 2-1단계 공정상태('idle')
+├── 5-1단계 cook and place (stm_unit_2) 
+│   ├── EXEC_TRIGGER: 총조리시간이 11분 30초을 초과한 요리가 있는 경우 그 위치로 이동 && pc6센서가 idle상태일것 && 5-1단계 공정상태('idle') && 2-1단계 공정상태('idle')
 │   ├── SENSOR_READ: M119 (타겟 핀: (stm_1)PC7, (stm_2)PA9, (stm_2)PA10, (stm_2)PB9, (stm_2)PC5)
 │   │
 │   └── COMMON_ACTIONS:
-│       |- 5단계 공정상태('busy') 변경
+│       |- 5-1단계 공정상태('busy') 변경
 │       |- G1 X()           # heat unit 자리 c: 1번(x200), 2번(x400), .... 14번(x2800)
 │       |- G28 Y
 │       |- G28 Z
@@ -254,10 +254,29 @@
 │       |- G1 Y1500 Z1500
 │       |- G28 X
 │       |- M800 P0 S0     #공압해제 완료 (완료요리 카운터가 1개 올라감)
-│       `- 5단계 공정상태('idle') 변경
+│       `- 5-1단계 공정상태('complete') 변경
+│
+├── 5-2단계 cook and place (stm_unit_3) 
+│   ├── EXEC_TRIGGER: 5-1단계 공정상태('complete') && 5-2단계 공정상태('idle') && 2-1단계 공정상태('idle')
+│   ├── SENSOR_READ: M119 (타겟 핀: (stm_1)PC7, (stm_2)PA9, (stm_2)PA10, (stm_2)PB9, (stm_2)PC5)
+│   │
+│   └── COMMON_ACTIONS:
+│       |- 5-2단계 공정상태('busy') 변경
+│       |- M800 P0 S1.    # 공압유닛 그리퍼 작동 
+│       `- 5-2단계 공정상태('complete') 변경
+│ 
+├── 5-3단계 cook and place (stm_unit_2) 
+│   ├── EXEC_TRIGGER: 5-1단계 공정상태('complete') && 5-2단계 공정상태('complete') && 2-1단계 공정상태('idle')
+│   ├── SENSOR_READ: M119 (타겟 핀: (stm_1)PC7, (stm_2)PA9, (stm_2)PA10, (stm_2)PB9, (stm_2)PC5)
+│   │
+│   └── COMMON_ACTIONS:
+│       |- M800 P0 S0     #공압해제 완료 (완료요리 카운터가 1개 올라감)
+        |- G28 Y.       #충돌방지 해제
+│       `- 5-1단계 공정상태('idle'), 5-2단계 공정상태('idle'), 완료요리카운터 +1 변경
+│ 
 │
 └── 6-1단계 finish stage (stm_unit_3) 
-    ├── EXEC_TRIGGER: 총조리시간이 11분 초과한 요리가 있는 경우 AND 6-1단계 공정상태('idle')
+    ├── EXEC_TRIGGER: 6-1단계 공정상태('idle') AND PB9 : OPEN
     ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6)
     │   ├── COMMON_ACTIONS:
 │   │   |- 6-1단계 공정상태('busy') 변경
@@ -278,14 +297,16 @@
 │
 │
 └── 6-2단계 finish stage (stm_unit_3) 
-    ├── EXEC_TRIGGER: 6-1단계 공정상태('complete')
+    ├── EXEC_TRIGGER: 6-1단계 공정상태('complete') AND 완료요리 카운터 > 0
     ├── SENSOR_READ: M119 (타겟 핀: PD2, PC7, PC6), 정기적으로 작동
     │   
     └─── COMMON_ACTIONS: 
+        |- M800 P1 S1            # x축 조정 이동 (조리 내부공간에서 격리)
         |- G1 X2000            # x축 조정 이동 (조리 내부공간에서 격리)
         |- G1 Y1500      # 2번 컨베이어로 조정 이동
         |- G1 Z0         # z축 조정 하강 (컨베이어2로 이동)
-        `- M103 p3 s() f2000 D1.  # 컨베이어 이송(1테이블 1500, 2테이블 3000, 3테이블 4500)  
+        |- M103 p3 s() f2000 D1.  # 컨베이어 이송(1테이블 1500, 2테이블 3000, 3테이블 4500)  
+        `- 누적적재량 = 0, 완료요리 카운터 = 0
 
 
 ##############3
@@ -581,3 +602,4 @@ def schedule_pipeline():
             _run_stage3_cook_and_place(stage2_done_item, target_slot)
             return
  
+ㅖㅠ
