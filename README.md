@@ -48,21 +48,22 @@
 │   │ 
 ├── (stm_2)
 │   ├── stm_unit_2. tim2 XYZ 이송 유닛
-│   │   ├── (테이블상단에 (PB9)입력센서 존재, G39과 연동하여 물건 탐지시까지 이동(도킹) 수행)
+│   │   ├── (테이블상단에 (PB9)입력센서 존재, G39과 연동하여 물건 탐지시까지 이동(도킹) 수행, 도킹 그리퍼 pc12)
 │   │   ├── (X축 PC9입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행, heat plate에 전달하기 위함)
-│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PB13, 역방향리미트 PC8) (정방향 공압 & 락링(PC2, 역방향 PC3)
-│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PB14, 역방향리미트 PC6) (정방향 공압 & 락킹(PC10, 역방향 PC11)
-│   ├── Ignite_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC9 으로 안전밸브 해제)
-│   ├── Ignite_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC3 으로 안전밸브 해제)
+│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PB13, 역방향리미트 PC8) (정방향 공압 & 락링(PC2)
+│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PB14, 역방향리미트 PC6) (정방향 공압 & 락킹(PC3)
+│   ├── Ignite_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC10 으로 안전밸브 해제)
+│   ├── Ignite_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC11 으로 안전밸브 해제)
 │   │ 
 ├── (stm_3)
 │   ├── stm_unit_3. tim2 XYZ 이송 유닛. #컨베이어 이송완료된 접시를 받아야 함
-│   │   ├── (테이블상단에 pd2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
+│   │   ├── (테이블상단에 PB9입력센서 존재, M119과 연동하여 물건 탐지시 이동 수행)
 │   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
-│   ├── Finish_Conveyer_1. tim3 ch1 (리미트 PA9, 탐지프로브 PB9)   #장전된 접시 수량의 최대치 20개, 
-│   ├── Finish_Conveyer_2. tim3 ch2 (리미트 PA10, 탐지프로브 PC5)   #장전된. 접시 수량의 최대치 20개, 1번 컨 
+│   │   ├── 도킹유닛 3에서 아이템을 받아서 고정 후 드랍하는 유닛(PC12) 
+│   ├── Finish_Conveyer_1. tim3 ch1 (리미트 PB13, 탐지프로브 PC8)   #장전된 접시 수량의 최대치 20개, tim2 유닛 바로 위에 상단에 있음
+│   ├── Finish_Conveyer_2. tim3 ch2 (리미트 PB14, 탐지프로브 PC6)   #장전된. 접시 수량의 최대치 20개, tim3와 연동하여 tim2 유닛까지 이송
 │   ├── DISH_Transfer_1. tim3 ch3 (접시장전유닛 1 하강)   #장전된 접시 수량의 최대치 20개, 홈복귀로 리미트 탐지까지 전진 
-│   ├── DISH_Transfer_2. tim3 ch4 (접시장전유닛 2 하강).   #장전된 접시 수량의 최대치 20개, Tim3 ch3의 접시수량 소진시 tim3 ch4사용
+│   ├── DISH_Transfer_2. tim3 ch4 (접시장전유닛 2 하강).   # tim2에서 접시를 받아서 이송... 
 
 
 
