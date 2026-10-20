@@ -327,8 +327,6 @@
 
 ##############3
 
-
-
 ├── 1단계 pick and place (대상: stm_unit_1)
 │   ├── EXEC_TRIGGER:
 │   │   [조건] 주문 대기열 존재 && Unit 1 유휴 && stm1_pc7/pd2 안전 상태
@@ -336,217 +334,168 @@
 │   │
 │   ├── SENSOR_READ:
 │   │   [G-code] M119
-│   │   [Target Pins] (stm_1) PD2, PC7, PC6
+│   │   [Target Pins] (stm_1) PD2, PC6, PC7, PB9
 │   │
-│   ├── BRANCH_RULES (냉장고 오픈 분기):
-│   │   ├── [RULE_A] IF (PD2: OPEN && 주문메뉴 in ('수블라키', '투움'))
-│   │   │   └── ACTION_SEQUENCE:
-│   │   │       ├── M103 P0 S2000 F2000 D0    # 1호 냉장고 오픈 (tim3 ch1)
-│   │   │       └── G28                       # 시작 전 축 복귀
-│   │   │
-│   │   ├── [RULE_B] IF (PD2: OPEN && 주문메뉴 in ('룰라', '비프샤슬릭', '치킨샤슬릭'))
-│   │   │   └── ACTION_SEQUENCE:
-│   │   │       ├── M103 P1 S2000 F2000 D0    # 2호 냉장고 오픈 (tim3 ch2)
-│   │   │       └── G28                       # 시작 전 축 복귀
-│   │   │
-│   │   └── [RULE_C] IF (PD2: CLOSED)
-│   │       └── ACTION_SEQUENCE:
-│   │           └── G4 P1000                  # 1초 대기 후 M119 재조회 루프
+│   ├── COMMON_ACTIONS (시작):
+│   │   [Python] is_unit1_busy = True; target_item["status"] = "1단계:Pick"
 │   │
-│   ├── AXIS_TARGET_RULES (메뉴별 X축 초기 진입):
-│   │   ├── [CASE_A] IF (메뉴 == '수블라키')     -> G1 X2000
-│   │   ├── [CASE_B] IF (메뉴 == '투움')         -> G1 X2400
-│   │   ├── [CASE_C] IF (메뉴 == '룰라')         -> G1 X2800
-│   │   ├── [CASE_D] IF (메뉴 == '비프샤슬릭')   -> G1 X3300
-│   │   └── [CASE_E] IF (메뉴 == '치킨샤슬릭')   -> G1 X3600
+│   ├── BRANCH_RULES (냉장고 도어 오픈):
+│   │   ├── [RULE_A] IF target_item["name"] in ["수블라키", "투움"]
+│   │   │   └── ACTION_SEQUENCE: M103 P0 S2000 F2000 D0 -> G28
+│   │   └── [RULE_B] IF target_item["name"] in ["룰라", "비프샤슬릭", "치킨샤슬릭"]
+│   │       └── ACTION_SEQUENCE: M103 P1 S2000 F2000 D0 -> G28
 │   │
-│   ├── COMMON_ACTIONS (파지 및 인출 공정):
-│   │   ├── G38 X200 F200                     # PC6 센서 탐지 시까지 X축 전진
-│   │   ├── G92 X0                            # X축 영점 재설정
-│   │   ├── G1 X-20 F1000                     # X축 보정 후퇴
-│   │   ├── G90                               # 절대 좌표계 복귀
-│   │   ├── G1 Z2000                          # Z축 하강 진입
-│   │   ├── G1 Y2000                          # Y축 슬롯 접근
-│   │   ├── G1 Z200                           # Z축 안착
-│   │   ├── G40                               # PD2 센서 탐지 시까지 Z축 이동
-│   │   ├── M800 P4 S1                        # 그리퍼 공압 유닛 ON (PC10 파지 1)
-│   │   ├── M800 P5 S1                        # 그리퍼 공압 유닛 ON (PC11 파지 2)
-│   │   └── G28 Z Y                           # Z, Y축 안전 높이 복귀
+│   ├── AXIS_ALIGNMENT (메뉴별 X축 진입):
+│   │   [Positioning] G1 X[x_val]  # 수블라키: 2000, 투움: 2400, 룰라: 2800, 비프샤슬릭: 3300, 치킨샤슬릭: 3600
+│   │   [G-code Flow]
+│   │   |- G38 X200 F200   # PC6 센서 감지 탐색
+│   │   |- G92 X0          # 기준점 리셋
+│   │   |- G1 X-20 F1000   # 20스텝 안전 마진 후퇴
+│   │   |- G90             # 절대 좌표계 복귀
+│   │   |- G1 Z2000 -> G1 Y2000 -> G1 Z200
+│   │   |- G40             # PD2 프로브 센서 접촉 시까지 하강
+│   │   |- M800 P4 S1      # 공압 파지 ON
+│   │   |- M800 P5 S1      # 보조 예압 체결 ON
+│   │   `- G28 Z Y         # 상승 후 회전 원점 복귀
 │   │
-│   └── BRANCH_RULES (냉장고 도어 클로즈):
-│       ├── [RULE_A] IF (주문메뉴 in ('수블라키', '투움'))
-│       │   └── ACTION_SEQUENCE:
-│       │       ├── M128 P0                   # 1호 냉장고 닫기
-│       │       └── M119
-│       │
-│       └── [RULE_B] IF (주문메뉴 in ('룰라', '비프샤슬릭', '치킨샤슬릭'))
-│           └── ACTION_SEQUENCE:
-│               ├── M128 P1                   # 2호 냉장고 닫기
-│               └── M119
+│   ├── BRANCH_RULES (냉장고 도어 닫기):
+│   │   ├── [RULE_A] IF target_item["name"] in ["수블라키", "투움"]
+│   │   │   └── ACTION_SEQUENCE: M128 P0 -> M119
+│   │   └── [RULE_B] IF target_item["name"] in ["룰라", "비프샤슬릭", "치킨샤슬릭"]
+│   │       └── ACTION_SEQUENCE: M128 P1 -> M119
+│   │
+│   └── COMMON_ACTIONS (종료):
+│       [Python] is_unit1_busy = False; target_item["status"] = "1단계:완료대기"
 │
-├── 2-1단계 unit change (대상: stm_unit_2 접근)
-│   ├── EXEC_TRIGGER:
-│   │   [조건] 1단계 완료대기 존재 && 11분 30초 초과 요리 부재 && Unit 2 유휴 && (stm1)PD2: triggered && (stm1)PC7: no trigger
-│   │   [Python] any(item["status"] == "1단계:완료대기" for item in active_orders) and not has_cooking_over_limit() and not is_unit2_busy and (sensor_states["stm1_pd2"] == "triggered") and (sensor_states["stm1_pc7"] == "no trigger")
+├── 2단계 unit change (대상: stm_unit_1, stm_unit_2 연동)
+│   ├── 2-1단계: stm_unit_2 도킹 접근
+│   │   ├── EXEC_TRIGGER:
+│   │   │   [조건] 11분 30초 초과 요리 부재 && 1단계 완료 항목 존재 && Unit 2 유휴 && stm1_pd2 감지 && stm1_pc7 미감지
+│   │   │   [Python] not has_cooking_over_limit() and (get_ready_stage1_item() is not None) and not is_unit2_busy and (sensor_states["stm1_pd2"] == "triggered") and (sensor_states["stm1_pc7"] == "no trigger")
+│   │   ├── SENSOR_READ:
+│   │   │   [G-code] M119
+│   │   │   [Target Pins] (stm_2) PC6, PB9
+│   │   └── ACTIONS:
+│   │       [Python] is_unit2_busy = True; unit2_at_prepick_pos = False; item["status"] = "2단계:Change"
+│   │       [G-code] G1 X(b1_x + 2500) -> G38 X200 F200 -> G92 X0 -> G1 X-20 F1000 -> G90
 │   │
-│   ├── SENSOR_READ:
-│   │   [G-code] M119
-│   │   [Target Pins] (stm_1) PD2, PC7 / (stm_2) PC6
+│   ├── 2-2단계: stm_unit_1 도킹 하강
+│   │   ├── EXEC_TRIGGER: 2-1단계 이동 완료 수신 (OK)
+│   │   └── ACTIONS: [G-code] (stm_1) G40  # Z축 PC7 도킹 센서 접촉까지 전진
 │   │
-│   └── BRANCH_RULES:
-│       ├── [RULE_A] IF (stm2_pc6: OPEN)
-│       │   └── ACTION_SEQUENCE:
-│       │       ├── G1 X{b1_x + 2500}         # Unit 1 X좌표 기준 +2500 위치 접근
-│       │       ├── G38 X200 F200             # PC6 센서 탐지 시까지 전진
-│       │       ├── G92 X0                    # X축 영점 재설정
-│       │       ├── G1 X-20 F1000             # X축 보정 이동
-│       │       └── G90                       # 절대 좌표 복귀
-│       │
-│       └── [RULE_B] IF (stm2_pc6: CLOSED)
-│           └── ACTION_SEQUENCE:
-│               └── M119                      # 간섭 대기 후 재조회
-│
-├── 2-2단계 unit change (대상: stm_unit_1 도킹)
-│   ├── EXEC_TRIGGER:
-│   │   [조건] 2-1단계 stm_unit_2 접근 완료
+│   ├── 2-3단계: stm_unit_2 파지 인계
+│   │   ├── EXEC_TRIGGER: 2-2단계 도킹 완료 수신 (OK)
+│   │   └── ACTIONS: [G-code] (stm_2) M800 P0 S1 -> G4 P1000  # Unit 2 그리퍼 파지 체결
 │   │
-│   └── COMMON_ACTIONS:
-│       └── G40                               # (stm_1) PC7 도킹 센서 탐지 시까지 하강 이동
-│
-├── 2-3단계 unit change (대상: stm_unit_2 파지)
-│   ├── EXEC_TRIGGER:
-│   │   [조건] 2-2단계 도킹 완료 수신
-│   │
-│   └── COMMON_ACTIONS:
-│       ├── M800 P0 S1                        # stm_unit_2 그리퍼 공압 파지 ON
-│       └── G4 P1000                          # 1초 대기 (파지 안정화)
-│
-├── 2-4단계 unit change (대상: stm_unit_1 이탈 복귀)
-│   ├── EXEC_TRIGGER:
-│   │   [조건] 2-3단계 stm_unit_2 파지 완료
-│   │
-│   └── COMMON_ACTIONS:
-│       ├── M800 P0 S0                        # stm_unit_1 그리퍼 공압 파지 OFF
-│       ├── M800 P1 S0                        # stm_unit_1 보조 공압 OFF
-│       ├── G4 P2000                          # 2초 압력 해제 대기
-│       └── G28                               # stm_unit_1 원점 복귀 -> (stm_1) PC7 triggered 설정 -> 1단계 루프 재개 가능
+│   └── 2-4단계: stm_unit_1 파지 해제 및 원점 복귀
+│       ├── EXEC_TRIGGER: 2-3단계 파지 완료 수신 (OK)
+│       └── ACTIONS:
+│           [G-code] (stm_1) M800 P0 S0 -> M800 P1 S0 -> G4 P2000 -> G28
+│           [Python] sensor_states["stm1_pc7"] = "triggered"; item["status"] = "2단계:완료대기"; is_unit2_busy = False
 │
 ├── 3단계 cook and place (대상: stm_unit_2)
 │   ├── EXEC_TRIGGER:
-│   │   [조건] 2단계 완료대기 존재 && 11분 30초 초과 요리 부재 && (stm1)PC7: triggered && 앞면 슬롯 잔여시간 >= 20초 확보
-│   │   [Python] any(item["status"] == "2단계:완료대기" for item in active_orders) and not has_cooking_over_limit() and (sensor_states["stm1_pc7"] == "triggered") and (get_empty_heat_slot_in_front_plate() is not None) and not is_unit2_busy
+│   │   [조건] 11분 30초 초과 요리 부재 && 2단계 완료 항목 존재 && stm1_pc7 감지 && 앞면 플레이트 내 잔여 체류시간 20초 이상 슬롯 확보
+│   │   [Python] not has_cooking_over_limit() and any(item["status"] == "2단계:완료대기" for item in active_orders) and (sensor_states["stm1_pc7"] == "triggered") and (get_empty_heat_slot_in_front_plate() is not None) and not is_unit2_busy
 │   │
 │   ├── SENSOR_READ:
 │   │   [G-code] M119
 │   │   [Target Pins] (stm_2) PA9, PA10, PB9, PC5
 │   │
-│   └── COMMON_ACTIONS:
-│       ├── G1 X{target_slot * 200}           # 대상 슬롯 좌표 이동 (1번: 200 ~ 14번: 2800)
-│       ├── G1 Z1500 Y1500                    # 조리대 안착 좌표 진입
-│       ├── M800 P0 S0                        # stm_unit_2 공압 해제 (요리 거치)
-│       ├── G4 P1000                          # 1초 대기
-│       ├── M800 P2 S1                        # 안착 고정 기구 작동
-│       └── G28 Z Y                           # Z, Y축 복귀 -> 4대 타이머(총 조리, 앞면, 뒷면, 체류) 계측 개시
+│   └── ACTIONS:
+│       [Python] is_unit2_busy = True; unit2_at_prepick_pos = False; item["assigned_slot"] = target_slot; item["status"] = "3단계:CookPlace"; heat_units[target_slot]["status"] = "reserved"
+│       [G-code Flow]
+│       |- G1 X(target_slot * 200)   # 지정된 슬롯 좌표로 정밀 수평 이송
+│       |- G1 Z1500 Y1500           # 투입 위치 하강 및 회전 진입
+│       |- M800 P0 S0               # Unit 2 그리퍼 해제
+│       |- G4 P1000                 # 1초 안정화 대기
+│       |- M800 P2 S1               # Heat unit 락킹 실린더 고정 체결
+│       `- G28 Z Y                  # 안전 고도 복귀 및 원점 정렬
+│       [Python Completion]
+│       |- is_unit2_busy = False; unit2_at_prepick_pos = True; sensor_states["stm1_pc7"] = "no trigger"
+│       |- item["status"] = "4단계:조리중"; heat_units[target_slot]["status"] = "cooking"; heat_units[target_slot]["order"] = item
+│       `- heat_units[target_slot]["total_cook_time" / "front_cook_time" / "back_cook_time" / "heat_unit_stay_time"] = 0.0 (4대 타이머 개시)
 │
-├── 4단계 go to cook (대상: stm_unit_2 / 플레이트 위상 회전)
+├── 4단계 go to cook (위상 반전) (대상: stm_unit_2)
 │   ├── EXEC_TRIGGER:
-│   │   [조건] 플레이트 위상 체류시간 2분 도달 && Unit 2 유휴 && 반전 락 해제 상태
-│   │   [Python] (plate_phase_timer[1] >= 120.0 or plate_phase_timer[2] >= 120.0) and not is_unit2_busy and not (plate_flipping_lock[1] or plate_flipping_lock[2])
+│   │   [조건] Unit 2 유휴 && 플레이트 미반전 상태 && (HP1 또는 HP2의 위상 체류 타이머 >= 120.0초)
+│   │   [Python] not is_unit2_busy and not (plate_flipping_lock[1] or plate_flipping_lock[2]) and (plate_phase_timer[1] >= TIMER_UNIT_STAY_MAX or plate_phase_timer[2] >= TIMER_UNIT_STAY_MAX)
 │   │
 │   ├── SENSOR_READ:
 │   │   [G-code] M119
-│   │   [Target Pins] (stm_2) PC6, PA9, PA10, PB9, PC5
+│   │   [Target Pins] (stm_2) PC6 (위상 판정 센서), PB13, PB14, PC8
 │   │
-│   └── BRANCH_RULES:
-│       ├── [CASE_A] IF (stm2_pc6: OPEN) -> 명령어 Set 1
-│       │   └── ACTION_SEQUENCE:
-│       │       ├── M800 P7 S1                # 공압 잠금 해제
-│       │       ├── M103 P0 S2000 F2000 D0    # HP1 위상 반전 (앞 -> 뒤)
-│       │       ├── M103 P1 S2000 F2000 D1    # HP2 위상 반전 (뒤 -> 앞)
-│       │       ├── M800 P5 S0                # 고정 공압 체결
-│       │       ├── M119                      # 리미트 상태 확인
-│       │       └── [타이머 리셋]              # 해당 슬롯 heat_unit_stay_time = 0.0 초기화 후 2분 체류 주기 재개
-│       │
-│       └── [CASE_B] IF (stm2_pc6: CLOSED) -> 명령어 Set 2
-│           └── ACTION_SEQUENCE:
-│               ├── M800 P5 S1                # 공압 잠금 해제
-│               ├── M103 P0 S2000 F2000 D1    # HP1 위상 반전 (뒤 -> 앞)
-│               ├── M103 P1 S2000 F2000 D0    # HP2 위상 반전 (앞 -> 뒤)
-│               ├── M800 P7 S0                # 고정 공압 체결
-│               ├── M119                      # 리미트 상태 확인
-│               └── [타이머 리셋]              # 해당 슬롯 heat_unit_stay_time = 0.0 초기화 후 2분 체류 주기 재개
+│   ├── BRANCH_RULES:
+│   │   ├── [CASE_A] IF (PC6: OPEN) -> Set 1 위상 반전
+│   │   │   [G-code] M800 P7 S1 -> M103 P0 S2000 F2000 D0 -> M103 P1 S2000 F2000 D1 -> M800 P5 S0 -> M119
+│   │   │   [State Transition] HP1: 앞면 -> 뒷면 / HP2: 뒷면 -> 앞면
+│   │   └── [CASE_B] IF (PC6: CLOSED) -> Set 2 위상 반전
+│   │       [G-code] M800 P5 S1 -> M103 P0 S2000 F2000 D1 -> M103 P1 S2000 F2000 D0 -> M800 P7 S0 -> M119
+│   │       [State Transition] HP1: 뒷면 -> 앞면 / HP2: 앞면 -> 뒷면
+│   │
+│   └── ACTIONS (완료 처리):
+│       [Python]
+│       |- plate_flipping_lock[1] = plate_flipping_lock[2] = False; is_unit2_busy = False
+│       |- plate_phase_timer[1] = plate_phase_timer[2] = 0.0
+│       `- for slot in cooking_slots: heat_units[slot]["heat_unit_stay_time"] = 0.0 (4번 체류 타이머 리셋)
 │
-├── 5단계 cook and place (대상: stm_unit_2 / 조리 완료 요리 추출)
+├── 5단계 cook and place 배출 (대상: stm_unit_2)
 │   ├── EXEC_TRIGGER:
-│   │   [조건] 총 조리시간 11분 50초 초과 요리 존재 && 앞면 위치 && Unit 2 프리픽 위치 && stm2_pc6: idle
-│   │   [Python] any(info["status"] in ["cooking", "finished"] and info["total_cook_time"] >= 710.0 and plate_current_side[info["plate_id"]] == "front" for info in heat_units.values()) and unit2_at_prepick_pos and (sensor_states["stm2_pc6"] == "no trigger") and not is_unit2_busy
+│   │   [조건] 총 조리시간 >= 710.0초 (11분 50초) && 대상 슬롯이 앞면 위치 && Unit 2 프리픽 위치 && stm2_pc6 대기 상태 && stm1_pc7 안전 상태
+│   │   [Python] not is_unit2_busy and (info["total_cook_time"] >= TIMER_STAGE5_TRIGGER) and (plate_current_side[info["plate_id"]] == "front") and unit2_at_prepick_pos and (sensor_states["stm2_pc6"] == "no trigger") and (sensor_states["stm1_pc7"] == "no trigger")
 │   │
 │   ├── SENSOR_READ:
 │   │   [G-code] M119
-│   │   [Target Pins] (stm_1) PC7 / (stm_2) PC6, PA9, PA10, PB9, PC5
+│   │   [Target Pins] (stm_2) PA9, PA10, PB9, PC5
 │   │
-│   └── COMMON_ACTIONS:
-│       ├── G1 X{target_slot * 200}           # 대상 조리대 위치 이동
-│       ├── G28 Y                             # Y축 정렬
-│       ├── G28 Z                             # Z축 취출 높이 진입
-│       ├── M800 P0 S1                        # stm_unit_2 그리퍼 파지 ON
-│       ├── G1 Y1500 Z1500                    # 조리대 공간에서 요리 인출 상승
-│       ├── G28 X                             # X축 배출 존 이동
-│       ├── M800 P0 S0                        # stm_unit_2 공압 해제 (접시/버퍼로 인계)
-│       └── [내부 트리거]                      # [변수 2] 접시 담기 배칭 알고리즘으로 요리 전달 (단위: 1~3개)
+│   └── ACTIONS:
+│       [Python] is_unit2_busy = True; unit2_at_prepick_pos = False; info["status"] = "finished"; order["status"] = "5단계:완성배출"
+│       [G-code Flow]
+│       |- G1 X(slot_id * 200)       # 완성된 조리 슬롯으로 접근
+│       |- G28 Y -> G28 Z            # Y/Z축 정렬
+│       |- M800 P0 S1                # 조리물 파지 ON
+│       |- G1 Y1500 Z1500            # 충돌 방지 고도 상승
+│       |- G28 X                     # 배출 기준 위치로 복귀
+│       `- M800 P0 S0                # 그리퍼 해제 (배출 완료)
+│       [Python Completion]
+│       |- is_unit2_busy = False; unit2_at_prepick_pos = True
+│       |- info["status"] = "idle"; info["order"] = None; 4대 타이머 전체 0.0초 초기화
+│       `- order["status"] = "6단계:접시적재" -> _handle_stage6_plate_batching(order) 호출
 │
-├── 6-1단계 finish stage (대상: stm_unit_3 / 접시 사전 공급 및 컨베이어 기동)
-│   ├── EXEC_TRIGGER:
-│   │   [조건] 총 조리시간 11분(660초) 초과 요리 감지 && Unit 3 상태 IDLE
-│   │   [Python] any(info["status"] == "cooking" and info["total_cook_time"] >= 660.0 for info in heat_units.values()) and unit3_stage6_status == "idle" and not is_unit3_busy
-│   │
-│   ├── SENSOR_READ:
-│   │   [G-code] M119
-│   │   [Target Pins] (stm_3) PD2, PC7, PC6, PA9, PA10, PB9, PC5
-│   │
-│   └── BRANCH_RULES ([변수 3] 잔여 접시 수량 판정):
-│       ├── [CASE_A] IF (dish_stock['tim3_ch3'] >= 1)
-│       │   └── ACTION_SEQUENCE:
-│       │       ├── G39 P0 S20000 F400        # 1번 접시장전유닛(ch3) 하강 공급 (재고 -1)
-│       │       ├── M103 P3 S2000 F2000 D1    # 수신 1번 컨베이어 가동
-│       │       └── G1 Z2000                  # Z축 상승
-│       │
-│       └── [CASE_B] IF (dish_stock['tim3_ch3'] == 0 && dish_stock['tim3_ch4'] >= 1)
-│           └── ACTION_SEQUENCE:
-│               ├── G39 P1 S20000 F400        # 2번 접시장전유닛(ch4) 하강 공급 (재고 -1)
-│               ├── M103 P3 S2000 F2000 D1    # 수신 1번 컨베이어 가동
-│               └── G1 Z2000                  # Z축 상승
-│
-├── 6-2단계 finish stage (대상: stm_unit_3 / 접시 대기 및 요리 안착 격리)
-│   ├── EXEC_TRIGGER:
-│   │   [조건] 6-1단계 완료 && 접시 수령 완료 상태
-│   │   [Python] unit3_stage6_status == "plate_fed" and not is_unit3_busy
-│   │
-│   ├── SENSOR_READ:
-│   │   [G-code] M119
-│   │   [Target Pins] (stm_3) PD2, PC7, PC6
-│   │
-│   └── COMMON_ACTIONS:
-│       ├── G1 Z200                           # Z축 보정 상승 (컨베이어 공간 격리)
-│       └── [신호 대기]                        # 파이썬 배칭 엔진으로부터 조리 완료 신호 수신 대기
-│
-└── 6-3단계 finish stage (대상: stm_unit_3 / 테이블별 최종 컨베이어 서빙)
-    ├── EXEC_TRIGGER:
-    │   [조건] 접시 적재 완료 트리거 수신:
-    │          ① 동일 주문열(order_seq) 요리 3개 적재 완료
-    │          ② 주문열 잔여 수량이 3개 미만이고 해당 주문열 조리가 모두 종료됨
-    │          ③ 주문열이 다른 후속 요리가 도착하여 이전 접시 배출 필요
-    │   [Python] (current_serving_plate["loaded_count"] >= 3 or same_seq_remaining == 0) and not is_unit3_busy
+└── 6단계 finish stage (접시 공급 및 컨베이어 배출) (대상: stm_unit_3)
+    ├── 6-1단계: 접시 사전 투입 (사전 대기)
+    │   ├── EXEC_TRIGGER:
+    │   │   [조건] Unit 3 유휴 && 슬롯 중 총 조리시간 >= 660.0초(11분) 요리 발생 && 접시 미장전 상태
+    │   │   [Python] not is_unit3_busy and (unit3_stage6_status == "idle") and any(info["total_cook_time"] >= TIMER_STAGE6_TRIGGER for info in heat_units.values())
+    │   ├── BRANCH_RULES (접시 잔여 수량 관리: 변수 3):
+    │   │   ├── [CASE_A] IF dish_stock["tim3_ch3"] > 0
+    │   │   │   └── ACTION: dish_stock["tim3_ch3"] -= 1; G-code: G39 P0 S20000 F400 -> M103 P3 S2000 F2000 D1 -> G1 Z2000
+    │   │   ├── [CASE_B] IF dish_stock["tim3_ch3"] == 0 and dish_stock["tim3_ch4"] > 0
+    │   │   │   └── ACTION: dish_stock["tim3_ch4"] -= 1; G-code: G39 P1 S20000 F400 -> M103 P3 S2000 F2000 D1 -> G1 Z2000
+    │   │   └── [CASE_C] IF dish_stock 전부 소진
+    │   │       └── ACTION: 콘솔 및 GUI 경고 발생 -> G4 P1000
+    │   └── ACTIONS: is_unit3_busy = True; unit3_stage6_status = "plate_fed"
     │
-    ├── SENSOR_READ:
-    │   [G-code] M119
-    │   [Target Pins] (stm_3) PD2, PC7, PC6
+    ├── 6-2단계: 접시 수령 및 조리 완료 대기 위치 격리
+    │   ├── EXEC_TRIGGER: 6-1단계 G-code 실행 완료 (OK)
+    │   └── ACTIONS:
+    │       [G-code] G1 Z200 -> M119
+    │       [Python] is_unit3_busy = False; unit3_stage6_status = "waiting_dish"
     │
-    └── COMMON_ACTIONS:
-        ├── G1 X2000                          # 내부 작업 공간 간섭 회피 이동
-        ├── G1 Y1500                          # 2번 출구 컨베이어 정렬
-        ├── G1 Z0                             # Z축 하강 도킹
-        └── M103 P3 S{table_num * 1500} F2000 D1  # 테이블별 차등 거리 이송 (T1: 1500, T2: 3000, T3: 4500 ...)
+    └── 6-3단계: 테이블별 최종 배출 및 배칭 판정 (변수 2)
+        ├── EXEC_TRIGGER:
+        │   [조건] 5단계 배출 요리가 접시에 적재되었을 때 아래 분기 조건 충족 시
+        │   [Python] (current_serving_plate["loaded_count"] >= 3) or (same_seq_remaining == 0) or (새 주문열 요리 도착)
+        ├── BRANCH_RULES (변수 2 배칭 판정):
+        │   ├── [RULE 1: 정량 적재] 동일 주문열 요리가 누적 3개 도달 시 즉시 배출
+        │   ├── [RULE 2: 잔여 종결] 동일 주문열의 남은 조리물이 0개이면 3개 미만(1~2개)이라도 즉시 배출
+        │   └── [RULE 3: 열 분리] 다른 주문열의 요리가 도착하면 기존 접시 강제 배출 후 신규 접시 발번
+        └── ACTIONS:
+            [Python] is_unit3_busy = True; unit3_stage6_status = "delivering"
+            [G-code] G1 X2000 -> G1 Y1500 -> G1 Z0 -> M103 P3 S(table_num * 1500) F2000 D1
+            [Python Completion]
+            |- is_unit3_busy = False; unit3_stage6_status = "idle"
+            `- current_serving_plate = None (배칭 완료 리셋)
 
 처리 순서 정리(우선순위)
 ├── 1순위 : 4단계 goto cook
