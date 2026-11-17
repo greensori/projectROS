@@ -49,27 +49,26 @@
 
 
 자동화 설비 요약 
-이송유닛1. XYZ 이송 유닛 (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
 오픈유닛1. tim3
 ├── (stm_1)
-│   ├── stm_unit_1. tim2 XYZ 이송 유닛 (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
-│   │   ├── (Z축 말단에 PD2입력센서 존재, G40과 연동하여 물건 탐지시까지 이동 수행)
-│   │   ├── (X축 PC6입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행)
-│   │   ├── PC10(파지유닛), PC11(예압조정)
-│   ├── OPENER_1. tim3 ch1 (냉장고 1호 오픈)
-│   ├── OPENER_2. tim3 ch2 (냉장고 2호 오픈)
-│   ├── Platter_1. tim3 ch3 () (소스 분배. 파슬리)
+│   ├── stm_unit_1. tim2 Docking_1(XYZ 이송 유닛)
+│   │   ├── (Z축 상승시 냉장고도 같이 오픈되어 안에 정리된 메뉴들이 같이 상승)
+│   │   ├── (X축전진, Y축 회전으로 안에 진열 꼬지중 한개 선별)
+│   │   ├── 
+│   ├── Ignite_Sterter_1. tim3 ch1 (그릴 1 점화 시작, pneu_p0(공압실린더)와 같이 동작)
+│   ├── Ignite_sterter_2. tim3 ch2 (그릴 2 점화 시작, pneu_p1(공압실린더)과 같이 동작)
+│   ├── Skewer_Changer_1. tim3 ch3 (꼬지 뒤집기, pneu_p2, pneu_p4(로터리 그립 실린더)와 같이 동작)
 │   ├── Platter_2. tim3 ch4 () (소스 분배. 파프리카가루)
-│   ├── rodless_unit_1. (시작 PC2, 엔드pc3) (시작리미트 pd2, 엔드리미트 pb7), (pc12 도킹 파지, 확인 센서 pb5). #미지정 인풋 유닛
+│   ├── Locking_unit_1. (시작 PC2, 엔드pc3) (시작리미트 pd2, 엔드리미트 pb7), (pc12 도킹 파지, 확인 센서 pb5). #미지정 인풋 유닛
 │   │ 
 ├── (stm_2)
-│   ├── stm_unit_2. tim2 XYZ 이송 유닛
+│   ├── stm_unit_2. tim2 Docking_2(XYZ 이송 유닛)
 │   │   ├── (테이블상단에 (PB9)입력센서 존재, G39과 연동하여 물건 탐지시까지 이동(도킹) 수행, 도킹 그리퍼 pc12)
-│   │   ├── (X축 PC9입력센서 존재, G38과 연동하여 물건 탐지시까지 이동 수행, heat plate에 전달하기 위함)
-│   ├── PLATE_changer_1. tim3 ch1 (정방향리미트 PB13, 역방향리미트 PC8) (정방향 공압 & 락링(PC2)
-│   ├── PLATE_changer_2. tim3 ch2 (정방향리미트 PB14, 역방향리미트 PC6) (정방향 공압 & 락킹(PC3)
-│   ├── Ignite_starter_1. tim3 ch3. (별도 tkinter에 구동 버튼 작동, PC10 으로 안전밸브 해제)
-│   ├── Ignite_starter_2. tim3 ch4. (별도 tkinter에 구동 버튼 작동, PC11 으로 안전밸브 해제)
+│   │   ├── 
+│   ├── Finisher_1. tim3 ch1 마지막 도킹유닛 X 
+│   ├── Finisher_2. tim3 ch2 마지막 도킹유닛 Y
+│   ├── Finisher_3. tim3 ch3 마지막 도킹유닛 Z
+│   ├── Finish_conveyer_1. tim3 ch4. (Finisher에서 완료 접시를 받음)
 │   │ 
 ├── (stm_3)
 │   ├── stm_unit_3. tim2 XYZ 이송 유닛. #컨베이어 이송완료된 접시를 받아야 함
