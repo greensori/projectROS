@@ -57,9 +57,8 @@
 │   │   ├── 
 │   ├── Ignite_Sterter_1. tim3 ch1 (그릴 1 점화 시작, pneu_p0(공압실린더)와 같이 동작)
 │   ├── Ignite_sterter_2. tim3 ch2 (그릴 2 점화 시작, pneu_p1(공압실린더)과 같이 동작)
-│   ├── Skewer_Changer_1. tim3 ch3 (꼬지 뒤집기, pneu_p2, pneu_p4(로터리 그립 실린더)와 같이 동작)
-│   ├── Platter_2. tim3 ch4 () (소스 분배. 파프리카가루)
-│   ├── Locking_unit_1. (시작 PC2, 엔드pc3) (시작리미트 pd2, 엔드리미트 pb7), (pc12 도킹 파지, 확인 센서 pb5). #미지정 인풋 유닛
+│   ├── Skewer_Changer_1. tim3 ch3 (꼬지 뒤집기, pneu_p2, pneu_p3(로터리 그립 실린더)와 같이 동작)
+│   ├── Locking_unit_1. tim3 ch4
 │   │ 
 ├── (stm_2)
 │   ├── stm_unit_2. tim2 Docking_2(XYZ 이송 유닛)
